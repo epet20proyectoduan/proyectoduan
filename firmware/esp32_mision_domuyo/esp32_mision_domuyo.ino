@@ -346,9 +346,10 @@ void loop() {
     Reading r = sample();
     pushBuffer(r);
 
-    Serial.printf("#%u  T=%.2f°C  P=%.2f hPa  Alt=%.1f m (rel %.1f)  G=%.2f (máx %.2f)  incl=%.0f°/%.0f°  GPS=%s sats=%d\n",
-                  r.seq, r.temperature, r.pressure, r.altitude, r.altRel, r.gForce, r.gMax, r.pitch, r.roll,
-                  isnan(r.latitude) ? "sin fix" : "OK", r.satellites);
+    Serial.printf("#%u  T=%.2f°C  P=%.2f hPa  Alt=%.1f m (rel %.1f)", r.seq, r.temperature, r.pressure, r.altitude, r.altRel);
+    if (mpuOk) Serial.printf("  G=%.2f (máx %.2f)  incl=%.0f°/%.0f°", r.gForce, r.gMax, r.pitch, r.roll);
+    if (isnan(r.latitude)) Serial.printf("  GPS=sin señal (sats %d)\n", max(r.satellites, 0));
+    else Serial.printf("  GPS=%.6f, %.6f (sats %d)\n", r.latitude, r.longitude, r.satellites);
 
     connectWiFi();
     while (bufCount && flush()) {
