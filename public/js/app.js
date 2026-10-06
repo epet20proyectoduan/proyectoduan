@@ -27,7 +27,9 @@
     stats: {},
     totals: {},
     rows: [],
-    track: [],
+    track: [],      // lecturas con posición
+    trackPts: [],   // [lat, lon] de cada una (para el mapa)
+    trackKm: 0,     // distancia recorrida, calculada de forma incremental
     fields: [],
     bucket: null,
     streamOk: false,
@@ -564,8 +566,9 @@
     renderChartStats();
   }
 
-  // Las lecturas en vivo se suman al intervalo que corresponde (misma escala que la serie)
-  function appendToCharts(row) {
+  // Las lecturas en vivo se suman al intervalo que corresponde (misma escala que la serie).
+  // Solo actualiza los datos: el dibujo lo hace flushRender() una vez por cuadro.
+  function pushChartPoint(row) {
     const t = new Date(row.received_at).getTime();
     const bucketMs = (state.bucket || 1) * 1000;
     const x = Math.floor(t / bucketMs) * bucketMs;
@@ -585,12 +588,45 @@
       }
       while (data.length && data[0].x < from) data.shift();
     }
-    updateCharts();
-    renderChartStats();
   }
 
   // ---------------------------------------------------------- mapa GPS
   let map, trackLine, liveMarker, startMarker, accuracyCircle;
+  let drawnPts = 0;            // puntos del recorrido ya dibujados en el mapa
+  const MAX_TRACK = 5000;      // tope de puntos en memoria
+
+  // Distancia en km entre dos [lat, lon] (fórmula del haversine)
+  function distKm(a, b) {
+    const R = 6371;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(b[0] - a[0]);
+    const dLon = toRad(b[1] - a[1]);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLon / 2) ** 2;
+    return 2 * R * Math.asin(Math.sqrt(h));
+  }
+
+  function setTrack(track) {
+    state.track = track;
+    state.trackPts = track.map((p) => [p.latitude, p.longitude]);
+    state.trackKm = 0;
+    for (let i = 1; i < state.trackPts.length; i++) state.trackKm += distKm(state.trackPts[i - 1], state.trackPts[i]);
+    drawnPts = 0;
+  }
+
+  function pushTrack(row) {
+    if (row.latitude == null || row.longitude == null) return;
+    const p = [row.latitude, row.longitude];
+    const pts = state.trackPts;
+    if (pts.length) state.trackKm += distKm(pts[pts.length - 1], p);
+    state.track.push(row);
+    pts.push(p);
+    if (pts.length > MAX_TRACK) {
+      state.trackKm -= distKm(pts[0], pts[1]);
+      state.track.shift();
+      pts.shift();
+      drawnPts = 0;   // obliga a redibujar la línea completa
+    }
+  }
   let follow = true;
   let movingProgrammatically = false;
 
@@ -647,8 +683,7 @@
   }
 
   function renderGpsStats(row, hasFix, sats, hdop, pts, last) {
-    let km = 0;
-    if (map) for (let i = 1; i < pts.length; i++) km += map.distance(pts[i - 1], pts[i]) / 1000;
+    const km = state.trackKm;
     const goodHdop = hdop != null && hdop < 50;
     const items = [
       ['Señal', hasFix ? '<span class="ok">● Con posición</span>' : '<span class="warn">● Buscando satélites</span>'],
@@ -663,17 +698,25 @@
     $('#gpsStats').innerHTML = items.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
   }
 
+  function popupHtml() {
+    const last = state.track[state.track.length - 1];
+    if (!last) return '';
+    const hasFix = state.lastRow?.latitude != null;
+    return `<b>${hasFix ? 'Posición actual' : 'Última posición conocida'}</b><br>${nf(last.latitude, 6)}, ${nf(last.longitude, 6)}${last.altitude != null ? `<br>${nf(last.altitude)} m s.n.m.` : ''}<br>${dateTimeFmt.format(new Date(last.received_at))}`;
+  }
+
   function renderGps(fit) {
     if ($('#dashboard').hidden) return;
+    const created = !map;
     ensureMap();
     if (!map) return;
-    map.invalidateSize();
+    if (created || fit) map.invalidateSize();
 
     const row = state.lastRow;
     const sats = row?.extra?.satellites;
     const hdop = row?.extra?.hdop;
     const hasFix = row?.latitude != null && row?.longitude != null;
-    const pts = state.track.map((p) => [p.latitude, p.longitude]);
+    const pts = state.trackPts;
     const last = state.track[state.track.length - 1];
 
     // Aviso mientras no hay señal
@@ -691,7 +734,9 @@
     if (hasFix && hdop != null) chips.push(`<span class="chip">± ${nf(Math.max(2, hdop * 5), 0)} m</span>`);
     $('#gpsHud').innerHTML = chips.join('');
 
-    trackLine.setLatLngs(pts);
+    if (drawnPts === 0 || pts.length < drawnPts) trackLine.setLatLngs(pts);
+    else for (let i = drawnPts; i < pts.length; i++) trackLine.addLatLng(pts[i]);
+    drawnPts = pts.length;
     renderGpsStats(row, hasFix, sats, hdop, pts, last);
     if (!last) {
       $('#gpsInfo').textContent = 'Sin posiciones registradas todavía';
@@ -700,7 +745,9 @@
 
     const ll = [last.latitude, last.longitude];
     if (!liveMarker) {
-      liveMarker = L.marker(ll, { icon: L.divIcon({ className: '', html: gpsMarkerHtml(!hasFix), iconSize: [44, 44], iconAnchor: [22, 22] }), zIndexOffset: 1000 }).addTo(map);
+      liveMarker = L.marker(ll, { icon: L.divIcon({ className: '', html: gpsMarkerHtml(!hasFix), iconSize: [44, 44], iconAnchor: [22, 22] }), zIndexOffset: 1000 })
+        .addTo(map)
+        .bindPopup(popupHtml);
       startMarker = L.marker(pts[0], { icon: L.divIcon({ className: '', html: '<div class="pin-start"></div>', iconSize: [12, 12] }), title: 'Primera posición' })
         .addTo(map)
         .bindPopup('<b>Primera posición registrada</b>');
@@ -708,14 +755,15 @@
     } else {
       liveMarker.setLatLng(ll);
       startMarker.setLatLng(pts[0]);
+      if (liveMarker.isPopupOpen()) liveMarker.setPopupContent(popupHtml());
     }
     liveMarker.getElement()?.querySelector('.gps-marker')?.classList.toggle('stale', !hasFix);
 
     // Flecha de rumbo cuando se está moviendo
     const el = liveMarker.getElement()?.querySelector('.heading');
     let prev = null;
-    for (let i = pts.length - 2; i >= 0; i--) {
-      if (map.distance(pts[i], ll) > 3) { prev = pts[i]; break; }
+    for (let i = pts.length - 2; i >= Math.max(0, pts.length - 30); i--) {
+      if (distKm(pts[i], ll) > 0.003) { prev = pts[i]; break; }
     }
     const moving = hasFix && prev && (row.speed == null || row.speed > 1);
     if (el) {
@@ -731,13 +779,12 @@
       accuracyCircle.remove();
     }
 
-    let km = 0;
-    for (let i = 1; i < pts.length; i++) km += map.distance(pts[i - 1], pts[i]) / 1000;
+    const km = state.trackKm;
     $('#gpsInfo').textContent = `${nf(last.latitude, 6)}, ${nf(last.longitude, 6)} · recorrido ${km < 1 ? `${nf(km * 1000, 0)} m` : `${nf(km, 2)} km`}`;
-    liveMarker.bindPopup(`<b>${hasFix ? 'Posición actual' : 'Última posición conocida'}</b><br>${nf(last.latitude, 6)}, ${nf(last.longitude, 6)}${last.altitude != null ? `<br>${nf(last.altitude)} m s.n.m.` : ''}<br>${dateTimeFmt.format(new Date(last.received_at))}`);
 
     if (fit) flyTo(ll, Math.max(map.getZoom(), 17));
-    else if (follow) flyTo(ll);
+    // Siguiendo: solo mueve el mapa si el punto se acerca al borde (menos movimientos)
+    else if (follow && !map.getBounds().pad(-0.3).contains(ll)) flyTo(ll);
   }
 
   // ---------------------------------------------------------- tabla
@@ -754,6 +801,15 @@
         return `<td class="${f.numeric ? '' : 'l'}${v == null ? ' n' : ''}">${esc(fmt(v, f))}</td>`;
       })
       .join('')}</tr>`;
+  }
+
+  // Agrega varias filas nuevas de una sola vez
+  function appendTableRows(rows) {
+    const tbody = $('#rows');
+    tbody.insertAdjacentHTML('afterbegin', rows.slice().reverse().map((r) => rowHtml(r, true)).join(''));
+    while (tbody.rows.length > 100) tbody.deleteRow(-1);
+    const added = [...tbody.querySelectorAll('tr.new')];
+    setTimeout(() => added.forEach((tr) => tr.classList.remove('new', 'enter')), 1600);
   }
 
   function renderTable() {
@@ -797,7 +853,8 @@
       state.stats = stats;
       state.totals = totals;
       state.rows = rows;
-      state.track = track;
+      setTrack(track);
+      pendingRows.length = 0;
       state.packets = totals.count;
       state.lastRow = rows[0] || null;
       state.lastAt = state.lastRow ? new Date(state.lastRow.received_at) : null;
@@ -819,6 +876,47 @@
       toast('No se pudieron cargar los datos.');
     }
   }
+
+  // ---------------------------------------------------------- dibujo en vivo
+  // Los datos que llegan solo actualizan el estado; la pantalla se dibuja como
+  // máximo una vez por cuadro, y nunca mientras la pestaña está en segundo plano.
+  let dirty = false;
+  let rafId = 0;
+  let hiddenSince = 0;
+  const pendingRows = [];
+
+  function scheduleRender() {
+    dirty = true;
+    if (document.hidden || rafId) return;
+    rafId = requestAnimationFrame(flushRender);
+  }
+
+  function flushRender() {
+    rafId = 0;
+    if (!dirty || document.hidden) return;
+    dirty = false;
+    const rows = pendingRows.splice(0);
+    renderReadings({ bump: rows.length > 0 });
+    if (LIVE_APPEND.has(state.range)) {
+      updateCharts('none');
+      renderChartStats();
+    }
+    if (rows.length) appendTableRows(rows);
+    renderVisibility();
+    renderGps(false);
+    refreshLink();
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) {
+      hiddenSince = Date.now();
+      return;
+    }
+    // Si estuvo mucho tiempo afuera, se resincroniza con el servidor en un solo paso
+    if (hiddenSince && Date.now() - hiddenSince > 30_000) loadAll({ fit: false });
+    else if (dirty) scheduleRender();
+    hiddenSince = 0;
+  });
 
   // ---------------------------------------------------------- tiempo real
   let refreshTimer;
@@ -847,25 +945,18 @@
       state.rows.unshift(row);
       state.rows.length = Math.min(state.rows.length, 100);
       mergeStats(row);
-      renderReadings({ bump: true });
+      pushTrack(row);
 
       if (LIVE_APPEND.has(state.range)) {
-        appendToCharts(row);
+        pushChartPoint(row);
       } else {
         clearTimeout(refreshTimer);
         refreshTimer = setTimeout(() => loadAll({ fit: false }), 30_000);
       }
 
-      const tbody = $('#rows');
-      tbody.insertAdjacentHTML('afterbegin', rowHtml(row, true));
-      while (tbody.rows.length > 100) tbody.deleteRow(-1);
-      const added = tbody.rows[0];
-      setTimeout(() => added.classList.remove('new', 'enter'), 1600);
-
-      if (row.latitude != null && row.longitude != null) state.track.push(row);
-      renderVisibility();
-      renderGps(false);
-      refreshLink();
+      pendingRows.push(row);
+      if (pendingRows.length > 100) pendingRows.splice(0, pendingRows.length - 100);
+      scheduleRender();
     });
   }
 
@@ -910,10 +1001,11 @@
     $('#endpointUrl').textContent = `${location.origin}/api/telemetry`;
 
     setInterval(() => {
+      if (document.hidden) return;
       refreshLink();
       if (LIVE_APPEND.has(state.range) && charts.size) updateCharts('none');
     }, 1000);
-    setInterval(() => renderReadings(), 15_000);
+    setInterval(() => { if (!document.hidden) renderReadings(); }, 15_000);
     setInterval(() => loadDevices().catch(() => {}), 30_000);
   }
 
