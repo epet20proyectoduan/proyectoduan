@@ -11,7 +11,7 @@
  *   label    texto que se muestra
  *   unit     unidad
  *   digits   decimales
- *   group    'ambiente' | 'posicion' | 'sistema' (orden de las tarjetas)
+ *   group    'ambiente' | 'posicion' | 'movimiento' | 'sistema' (orden de las tarjetas)
  *   color    color de la tarjeta y del gráfico
  *   info     explicación breve: qué mide y por qué importa en la montaña
  *   insight  función (lectura) → texto calculado a partir del dato real, o null
@@ -72,18 +72,41 @@ window.PHYS = (() => {
     },
     {
       key: 'speed', label: 'Velocidad', unit: 'km/h', digits: 1, group: 'posicion', color: '#F472B6',
-      info: 'Velocidad medida por el velocímetro: cuenta los pulsos del sensor en cada vuelta y los convierte a km/h según la circunferencia configurada en el firmware.',
+      info: 'Velocidad calculada por el GPS a partir de posiciones sucesivas. Con la estación quieta puede marcar 1 o 2 km/h por el error propio del GPS.',
       insight: (r) => (r.speed == null ? null : `${nf(r.speed / 3.6, 2)} m/s`),
-    },
-    {
-      key: 'gps_speed', label: 'Velocidad GPS', unit: 'km/h', digits: 1, group: 'posicion', color: '#F9A8D4',
-      info: 'Velocidad calculada por el GPS a partir de posiciones sucesivas. Sirve para comparar con el velocímetro; a baja velocidad el GPS es menos preciso.',
     },
     {
       key: 'gps_altitude', label: 'Altitud GPS', unit: 'm', digits: 0, group: 'posicion', color: '#5EEAD4',
       info: 'Altura sobre el nivel del mar según el GPS. Suele tener un error de 10 a 20 m; se usa para contrastar con la del barómetro.',
       insight: (r) => (r.gps_altitude == null || r.altitude == null ? null : `Diferencia con el barómetro: ${nf(r.gps_altitude - r.altitude, 0)} m`),
     },
+    {
+      key: 'g_force', label: 'Fuerza G', unit: 'g', digits: 2, group: 'movimiento', color: '#FB7185',
+      info: 'Aceleración total que mide el acelerómetro, en unidades de la gravedad terrestre. En reposo marca 1 g (la propia gravedad); más de 1 g indica una aceleración o un impacto, y cerca de 0 g, caída libre.',
+      insight: (r) => (r.g_force == null ? null
+        : r.g_force < 0.3 ? 'Casi caída libre' : Math.abs(r.g_force - 1) < 0.1 ? 'En reposo o movimiento suave' : r.g_force > 2 ? 'Aceleración fuerte' : 'En movimiento'),
+    },
+    {
+      key: 'g_max', label: 'Pico de G', unit: 'g', digits: 2, group: 'movimiento', color: '#F43F5E',
+      info: 'Máxima aceleración registrada entre una lectura y la siguiente. El acelerómetro se lee 50 veces por segundo para no perder golpes o sacudidas cortas.',
+      insight: (r) => (r.g_max == null ? null : `≈ ${nf(r.g_max * 9.81, 1)} m/s²`),
+    },
+    {
+      key: 'pitch', label: 'Inclinación (cabeceo)', unit: '°', digits: 0, group: 'movimiento', color: '#FDBA74',
+      info: 'Ángulo hacia adelante o atrás respecto de la horizontal, calculado con la dirección de la gravedad. Es preciso cuando la estación no está acelerando bruscamente.',
+    },
+    {
+      key: 'roll', label: 'Inclinación (alabeo)', unit: '°', digits: 0, group: 'movimiento', color: '#FCD34D',
+      info: 'Ángulo hacia los costados respecto de la horizontal, calculado con la dirección de la gravedad.',
+    },
+    {
+      key: 'rotation', label: 'Velocidad de giro', unit: '°/s', digits: 0, group: 'movimiento', color: '#A3E635',
+      info: 'Qué tan rápido gira la estación, medido por el giroscopio. 360 °/s equivale a una vuelta completa por segundo.',
+      insight: (r) => (r.rotation == null ? null : r.rotation < 5 ? 'Sin rotación' : `${nf(r.rotation / 360, 2)} vueltas por segundo`),
+    },
+    { key: 'accel_x', label: 'Aceleración X', unit: 'm/s²', digits: 2, group: 'movimiento', card: false, chart: false },
+    { key: 'accel_y', label: 'Aceleración Y', unit: 'm/s²', digits: 2, group: 'movimiento', card: false, chart: false },
+    { key: 'accel_z', label: 'Aceleración Z', unit: 'm/s²', digits: 2, group: 'movimiento', card: false, chart: false },
     { key: 'latitude', label: 'Latitud', unit: '°', digits: 5, group: 'posicion', chart: false, card: false },
     { key: 'longitude', label: 'Longitud', unit: '°', digits: 5, group: 'posicion', chart: false, card: false },
     {

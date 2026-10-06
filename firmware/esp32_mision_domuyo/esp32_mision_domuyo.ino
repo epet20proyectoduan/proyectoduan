@@ -1,21 +1,24 @@
 /*
  * ============================================================
  *  Titan ATLAS · Misión Domuyo — Firmware de telemetría
- *  ESP32-S + BMP390 + GPS GY-GPS6MV2 (NEO-6M) + velocímetro
+ *  ESP32-S + BMP390 + GPS GY-GPS6MV2 (NEO-6M) + acelerómetro MPU6050
  * ============================================================
  *
  *  CONEXIONES
  *  ----------
- *  BMP390 (I2C)              GPS GY-GPS6MV2 (UART2)       Velocímetro (pulsos)
- *    VIN → 3V3                 VCC → 3V3 (o 5V)             señal → GPIO 27
- *    GND → GND                 GND → GND                    GND   → GND
- *    SDA → GPIO 21             TX  → GPIO 16 (RX2)          VCC   → 3V3
- *    SCL → GPIO 22             RX  → GPIO 17 (TX2)
+ *  El BMP390 y el MPU6050 comparten el bus I2C (direcciones distintas: 0x77 y 0x68).
+ *
+ *  BMP390 (I2C)        MPU6050 / GY-521 (I2C)     GPS GY-GPS6MV2 (UART2)
+ *    VIN → 3V3           VCC → 3V3                  VCC → 3V3 (o 5V)
+ *    GND → GND           GND → GND                  GND → GND
+ *    SDA → GPIO 21       SDA → GPIO 21              TX  → GPIO 16 (RX2)
+ *    SCL → GPIO 22       SCL → GPIO 22              RX  → GPIO 17 (TX2)
  *
  *  LIBRERÍAS (Arduino IDE → Herramientas → Administrar bibliotecas)
- *    - Adafruit BMP3XX Library  (instala también Adafruit Unified Sensor y BusIO)
- *    - TinyGPSPlus              (Mikal Hart)
- *    - ArduinoJson              (Benoit Blanchon) v7
+ *    - Adafruit BMP3XX Library   (instala también Adafruit Unified Sensor y BusIO)
+ *    - Adafruit MPU6050
+ *    - TinyGPSPlus               (Mikal Hart)
+ *    - ArduinoJson               (Benoit Blanchon) v7
  *
  *  PLACA: "ESP32 Dev Module"
  *
@@ -23,13 +26,17 @@
  *  (red WiFi, URL del servidor y API key). secrets.h no se sube a GitHub.
  *
  *  DATOS QUE ENVÍA (JSON):
- *    temperature, pressure, altitude  → BMP390
- *    alt_rel                          → altura relativa al encendido (BMP390)
- *    latitude, longitude              → GPS
- *    gps_altitude, gps_speed          → GPS
- *    satellites, hdop                 → calidad de la señal GPS
- *    speed                            → velocímetro (km/h)
- *    rssi, uptime_s                   → estado del ESP32
+ *    temperature, pressure, altitude   → BMP390
+ *    alt_rel                           → altura relativa al encendido (BMP390)
+ *    accel_x, accel_y, accel_z         → aceleración por eje (m/s²)
+ *    g_force                           → aceleración total (en g)
+ *    g_max                             → pico de aceleración desde la lectura anterior (g)
+ *    pitch, roll                       → inclinación (grados)
+ *    rotation                          → velocidad de giro (°/s)
+ *    latitude, longitude, gps_altitude → GPS
+ *    speed                             → velocidad según el GPS (km/h)
+ *    satellites, hdop                  → calidad de la señal GPS
+ *    rssi, uptime_s                    → estado del ESP32
  *
  *  Si se corta el WiFi, guarda las lecturas y las envía por lotes al volver.
  */
@@ -40,18 +47,20 @@
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP3XX.h>
+#include <Adafruit_MPU6050.h>
 #include <TinyGPSPlus.h>
 #include <ArduinoJson.h>
 #include <time.h>
 #include "secrets.h"
 
 // ---------------------------------------------------------------- CONFIGURACIÓN
-#define DEVICE_ID         "titan-atlas-01"
-#define SAMPLE_INTERVAL_MS 2000   // cada cuánto se toma una lectura
+#define DEVICE_ID          "titan-atlas-01"
+#define SAMPLE_INTERVAL_MS 2000   // cada cuánto se arma y envía una lectura
+#define IMU_INTERVAL_MS    20     // el acelerómetro se lee a 50 Hz para no perder picos
 #define BUFFER_SIZE        150    // lecturas guardadas sin conexión
 #define BATCH_SIZE         30     // lecturas por envío al reconectar
 
-// BMP390
+// I2C (BMP390 + MPU6050)
 #define I2C_SDA        21
 #define I2C_SCL        22
 #define SEA_LEVEL_HPA  1013.25    // presión a nivel del mar (ajustar con el dato del día para más precisión)
@@ -61,43 +70,40 @@
 #define GPS_TX_PIN     17         // al RX del GPS
 #define GPS_BAUD       9600
 
-// Velocímetro por pulsos (sensor Hall / reed / encoder)
-#define SPEED_PIN           27
-#define PULSES_PER_REV      1       // pulsos por vuelta (cantidad de imanes)
-#define WHEEL_CIRCUMFERENCE 2.10    // metros recorridos por vuelta
-#define SPEED_DEBOUNCE_US   3000    // filtra rebotes (máx. ~333 pulsos/s)
+// Acelerómetro MPU6050
+#define ACCEL_RANGE    MPU6050_RANGE_8_G      // 2, 4, 8 o 16 G según lo que se espere medir
+#define GYRO_RANGE     MPU6050_RANGE_500_DEG  // 250, 500, 1000 o 2000 °/s
+
+const float G = 9.80665f;
 
 // ---------------------------------------------------------------- OBJETOS
 Adafruit_BMP3XX bmp;
+Adafruit_MPU6050 mpu;
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(2);
 WiFiClientSecure tls;
 
 bool bmpOk = false;
+bool mpuOk = false;
 float groundAltitude = NAN;   // altura al encender, para calcular alt_rel
 
-// Pulsos del velocímetro (se cuentan en una interrupción)
-volatile uint32_t speedPulses = 0;
-volatile uint32_t lastPulseUs = 0;
-uint32_t lastSpeedCalcMs = 0;
-
-void IRAM_ATTR onSpeedPulse() {
-  uint32_t now = micros();
-  if (now - lastPulseUs >= SPEED_DEBOUNCE_US) {
-    speedPulses++;
-    lastPulseUs = now;
-  }
-}
+// Estado del acelerómetro (se actualiza a 50 Hz)
+struct ImuState {
+  float ax, ay, az;     // m/s²
+  float gx, gy, gz;     // rad/s
+  float gMax;           // pico de g desde la última lectura enviada
+} imu = {NAN, NAN, NAN, NAN, NAN, NAN, 0};
+uint32_t lastImu = 0;
 
 // ---------------------------------------------------------------- LECTURAS
 struct Reading {
   uint32_t seq;
   time_t   ts;
   float temperature, pressure, altitude, altRel;
+  float accelX, accelY, accelZ, gForce, gMax, pitch, roll, rotation;
   double latitude, longitude;
-  float gpsAltitude, gpsSpeed, hdop;
+  float gpsAltitude, speed, hdop;
   int   satellites;
-  float speed;
   int   rssi;
   uint32_t uptime;
 };
@@ -107,17 +113,18 @@ int bufHead = 0, bufCount = 0;
 uint32_t seq = 0;
 uint32_t lastSample = 0;
 
-float readSpeedKmh() {
-  noInterrupts();
-  uint32_t pulses = speedPulses;
-  speedPulses = 0;
-  interrupts();
-  uint32_t now = millis();
-  float seconds = (now - lastSpeedCalcMs) / 1000.0f;
-  lastSpeedCalcMs = now;
-  if (seconds <= 0) return 0;
-  float revs = (float)pulses / PULSES_PER_REV;
-  return (revs * WHEEL_CIRCUMFERENCE / seconds) * 3.6f;  // m/s → km/h
+void readImu() {
+  if (!mpuOk) return;
+  sensors_event_t a, g, t;
+  if (!mpu.getEvent(&a, &g, &t)) return;
+  imu.ax = a.acceleration.x;
+  imu.ay = a.acceleration.y;
+  imu.az = a.acceleration.z;
+  imu.gx = g.gyro.x;
+  imu.gy = g.gyro.y;
+  imu.gz = g.gyro.z;
+  float gNow = sqrtf(imu.ax * imu.ax + imu.ay * imu.ay + imu.az * imu.az) / G;
+  if (gNow > imu.gMax) imu.gMax = gNow;
 }
 
 // Hora: primero la del GPS; si no hay, la de internet (NTP); si no, 0
@@ -130,9 +137,7 @@ time_t currentTime() {
     t.tm_hour = gps.time.hour();
     t.tm_min  = gps.time.minute();
     t.tm_sec  = gps.time.second();
-    setenv("TZ", "UTC0", 1);
-    tzset();
-    return mktime(&t);
+    return mktime(&t);   // TZ = UTC (configurado en setup)
   }
   time_t now = time(nullptr);
   return now > 1700000000 ? now : 0;
@@ -143,10 +148,12 @@ Reading sample() {
   r.seq = seq++;
   r.ts = currentTime();
   r.temperature = r.pressure = r.altitude = r.altRel = NAN;
+  r.accelX = r.accelY = r.accelZ = r.gForce = r.gMax = r.pitch = r.roll = r.rotation = NAN;
   r.latitude = r.longitude = NAN;
-  r.gpsAltitude = r.gpsSpeed = r.hdop = NAN;
+  r.gpsAltitude = r.speed = r.hdop = NAN;
   r.satellites = -1;
 
+  // BMP390
   if (bmpOk && bmp.performReading()) {
     r.temperature = bmp.temperature;
     r.pressure    = bmp.pressure / 100.0f;  // Pa → hPa
@@ -155,16 +162,30 @@ Reading sample() {
     r.altRel = r.altitude - groundAltitude;
   }
 
+  // MPU6050
+  if (mpuOk && !isnan(imu.ax)) {
+    r.accelX = imu.ax;
+    r.accelY = imu.ay;
+    r.accelZ = imu.az;
+    r.gForce = sqrtf(imu.ax * imu.ax + imu.ay * imu.ay + imu.az * imu.az) / G;
+    r.gMax   = imu.gMax;
+    // Inclinación a partir de la gravedad (válida cuando no hay aceleraciones bruscas)
+    r.pitch = atan2f(-imu.ax, sqrtf(imu.ay * imu.ay + imu.az * imu.az)) * 180.0f / PI;
+    r.roll  = atan2f(imu.ay, imu.az) * 180.0f / PI;
+    r.rotation = sqrtf(imu.gx * imu.gx + imu.gy * imu.gy + imu.gz * imu.gz) * 180.0f / PI;
+    imu.gMax = r.gForce;   // reinicia el pico para el próximo intervalo
+  }
+
+  // GPS
   if (gps.location.isValid() && gps.location.age() < 5000) {
     r.latitude  = gps.location.lat();
     r.longitude = gps.location.lng();
   }
   if (gps.altitude.isValid() && gps.altitude.age() < 5000) r.gpsAltitude = gps.altitude.meters();
-  if (gps.speed.isValid() && gps.speed.age() < 5000)       r.gpsSpeed = gps.speed.kmph();
+  if (gps.speed.isValid() && gps.speed.age() < 5000)       r.speed = gps.speed.kmph();
   if (gps.satellites.isValid())                            r.satellites = gps.satellites.value();
   if (gps.hdop.isValid() && gps.hdop.value() > 0)          r.hdop = gps.hdop.hdop();
 
-  r.speed  = readSpeedKmh();
   r.rssi   = WiFi.status() == WL_CONNECTED ? WiFi.RSSI() : 0;
   r.uptime = millis() / 1000;
   return r;
@@ -192,13 +213,20 @@ void toJson(JsonObject o, const Reading &r) {
   addIf(o, "pressure", r.pressure);
   addIf(o, "altitude", r.altitude);
   addIf(o, "alt_rel", r.altRel);
+  addIf(o, "accel_x", r.accelX);
+  addIf(o, "accel_y", r.accelY);
+  addIf(o, "accel_z", r.accelZ);
+  addIf(o, "g_force", r.gForce);
+  addIf(o, "g_max", r.gMax);
+  addIf(o, "pitch", r.pitch);
+  addIf(o, "roll", r.roll);
+  addIf(o, "rotation", r.rotation);
   addIf(o, "latitude", r.latitude);
   addIf(o, "longitude", r.longitude);
   addIf(o, "gps_altitude", r.gpsAltitude);
-  addIf(o, "gps_speed", r.gpsSpeed);
+  addIf(o, "speed", r.speed);
   addIf(o, "hdop", r.hdop);
   if (r.satellites >= 0) o["satellites"] = r.satellites;
-  addIf(o, "speed", r.speed);
   if (r.rssi) o["rssi"] = r.rssi;
   o["uptime_s"] = r.uptime;
 }
@@ -261,9 +289,13 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n== Titan ATLAS · Misión Domuyo ==");
+  setenv("TZ", "UTC0", 1);
+  tzset();
+
+  Wire.begin(I2C_SDA, I2C_SCL);
+  Wire.setClock(400000);
 
   // BMP390
-  Wire.begin(I2C_SDA, I2C_SCL);
   bmpOk = bmp.begin_I2C(0x77) || bmp.begin_I2C(0x76);
   if (bmpOk) {
     bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_2X);
@@ -276,14 +308,20 @@ void setup() {
     Serial.println("⚠ BMP390 no encontrado: revisar SDA/SCL y alimentación");
   }
 
+  // MPU6050
+  mpuOk = mpu.begin(0x68) || mpu.begin(0x69);
+  if (mpuOk) {
+    mpu.setAccelerometerRange(ACCEL_RANGE);
+    mpu.setGyroRange(GYRO_RANGE);
+    mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
+    Serial.println("MPU6050 OK");
+  } else {
+    Serial.println("⚠ MPU6050 no encontrado: revisar SDA/SCL y alimentación");
+  }
+
   // GPS
   GPSSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
   Serial.println("GPS iniciado (el primer fix puede tardar 1-5 min a cielo abierto)");
-
-  // Velocímetro
-  pinMode(SPEED_PIN, INPUT_PULLUP);
-  attachInterrupt(digitalPinToInterrupt(SPEED_PIN), onSpeedPulse, FALLING);
-  lastSpeedCalcMs = millis();
 
   // WiFi + HTTPS
   tls.setInsecure();           // para validar el certificado: tls.setCACert(ROOT_CA)
@@ -297,14 +335,20 @@ void loop() {
   // El GPS manda datos todo el tiempo: hay que leerlos siempre
   while (GPSSerial.available()) gps.encode(GPSSerial.read());
 
+  // Acelerómetro a 50 Hz para registrar los picos de G
+  if (millis() - lastImu >= IMU_INTERVAL_MS) {
+    lastImu = millis();
+    readImu();
+  }
+
   if (millis() - lastSample >= SAMPLE_INTERVAL_MS) {
     lastSample = millis();
     Reading r = sample();
     pushBuffer(r);
 
-    Serial.printf("#%u  T=%.2f°C  P=%.2f hPa  Alt=%.1f m (rel %.1f)  GPS=%s sats=%d  v=%.1f km/h\n",
-                  r.seq, r.temperature, r.pressure, r.altitude, r.altRel,
-                  isnan(r.latitude) ? "sin fix" : "OK", r.satellites, r.speed);
+    Serial.printf("#%u  T=%.2f°C  P=%.2f hPa  Alt=%.1f m (rel %.1f)  G=%.2f (máx %.2f)  incl=%.0f°/%.0f°  GPS=%s sats=%d\n",
+                  r.seq, r.temperature, r.pressure, r.altitude, r.altRel, r.gForce, r.gMax, r.pitch, r.roll,
+                  isnan(r.latitude) ? "sin fix" : "OK", r.satellites);
 
     connectWiFi();
     while (bufCount && flush()) {

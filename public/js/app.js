@@ -12,7 +12,7 @@
   const ONLINE_MS = 60_000;
   const CORE = new Set(['temperature', 'humidity', 'pressure', 'altitude', 'latitude', 'longitude', 'speed', 'battery', 'rssi']);
   const CATALOG = new Map((window.SENSORS || []).map((s, i) => [s.key, { ...s, order: i }]));
-  const GROUP_ORDER = { ambiente: 0, posicion: 1, sistema: 2 };
+  const GROUP_ORDER = { ambiente: 0, posicion: 1, movimiento: 2, sistema: 3 };
   const PHYS = window.PHYS;
   const EXTRA_COLORS = ['#60A5FA', '#F87171', '#4ADE80', '#E879F9', '#FB923C', '#2DD4BF', '#C084FC', '#FDE047'];
   let extraColorIdx = 0;
