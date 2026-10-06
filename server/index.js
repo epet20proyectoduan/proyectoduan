@@ -34,6 +34,8 @@ app.use(
       },
     },
     crossOriginEmbedderPolicy: false,
+    // Los servidores de mapas (OpenStreetMap) exigen saber desde qué sitio se piden las imágenes
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
   }),
 );
 app.use(compression({ filter: (req, res) => req.path !== '/api/stream' && compression.filter(req, res) }));

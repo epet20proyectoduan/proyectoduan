@@ -600,12 +600,13 @@
       .setView([-38.4, -63.6], 4); // Argentina hasta tener la primera posición
     L.control.zoom({ position: 'bottomright' }).addTo(map);
     const esri = (name, maxNativeZoom) => L.tileLayer(`https://server.arcgisonline.com/ArcGIS/rest/services/${name}/MapServer/tile/{z}/{y}/{x}`, { maxZoom: 20, maxNativeZoom, attribution: '© Esri' });
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 19, attribution: '© OpenStreetMap' });
+    const streets = esri('World_Street_Map', 19);
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 19, attribution: '© OpenStreetMap', referrerPolicy: 'strict-origin-when-cross-origin' });
     const sat = L.layerGroup([esri('World_Imagery', 19), esri('Reference/World_Boundaries_and_Places', 19)]);
     const dark = esri('Canvas/World_Dark_Gray_Base', 16);
     const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 17, attribution: '© OpenStreetMap · © OpenTopoMap (CC-BY-SA)' });
-    osm.addTo(map);
-    L.control.layers({ Calles: osm, Satélite: sat, Oscuro: dark, Topográfico: topo }, null, { position: 'topright' }).addTo(map);
+    streets.addTo(map);
+    L.control.layers({ Calles: streets, Satélite: sat, Oscuro: dark, Topográfico: topo, OpenStreetMap: osm }, null, { position: 'topright' }).addTo(map);
     L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
 
     trackLine = L.polyline([], { color: '#ff6b35', weight: 3.5, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }).addTo(map);
