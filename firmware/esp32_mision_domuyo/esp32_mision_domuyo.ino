@@ -368,8 +368,15 @@ void loop() {
 
     Serial.printf("#%u  T=%.2f°C  P=%.2f hPa  Alt=%.1f m (rel %.1f)", r.seq, r.temperature, r.pressure, r.altitude, r.altRel);
     if (mpuOk) Serial.printf("  G=%.2f (máx %.2f)  incl=%.0f°/%.0f°", r.gForce, r.gMax, r.pitch, r.roll);
-    if (isnan(r.latitude)) Serial.printf("  GPS=sin señal (sats %d)\n", max(r.satellites, 0));
-    else Serial.printf("  GPS=%.6f, %.6f (sats %d)\n", r.latitude, r.longitude, r.satellites);
+    // Diagnóstico del GPS: distingue "no conectado" de "conectado buscando satélites"
+    if (gps.charsProcessed() < 10)
+      Serial.println("  GPS: NO RECIBE DATOS -> revisar TX del GPS en RX2/D16, VCC y GND");
+    else if (gps.passedChecksum() == 0)
+      Serial.println("  GPS: llegan datos pero ilegibles -> revisar velocidad (9600) o cable RX/TX");
+    else if (isnan(r.latitude))
+      Serial.printf("  GPS: conectado OK, buscando satelites (%d a la vista)\n", max(r.satellites, 0));
+    else
+      Serial.printf("  GPS: %.6f, %.6f (%d satelites)\n", r.latitude, r.longitude, r.satellites);
 
     connectWiFi();
     while (bufCount && flush()) {
