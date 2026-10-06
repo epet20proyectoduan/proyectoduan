@@ -242,12 +242,19 @@ void connectWiFi() {
   WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
 }
 
-void onWiFiEvent(WiFiEvent_t event) {
+void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   if (event == ARDUINO_EVENT_WIFI_STA_GOT_IP) {
     Serial.printf("WiFi conectado · IP %s · señal %d dBm\n", WiFi.localIP().toString().c_str(), WiFi.RSSI());
     configTime(0, 0, "pool.ntp.org", "time.google.com");
   } else if (event == ARDUINO_EVENT_WIFI_STA_DISCONNECTED) {
-    Serial.println("WiFi desconectado");
+    uint8_t r = info.wifi_sta_disconnected.reason;
+    const char *why =
+      r == 201 ? "no se encuentra la red (¿nombre mal escrito o es de 5 GHz?)" :
+      (r == 202 || r == 15 || r == 204) ? "contraseña incorrecta" :
+      r == 203 ? "la red rechazó la conexión" :
+      r == 200 ? "señal muy débil (acercar el ESP32)" :
+      r == 8   ? "desconexión normal" : "otro motivo";
+    Serial.printf("WiFi desconectado · motivo %u: %s\n", r, why);
   }
 }
 
