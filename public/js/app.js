@@ -94,7 +94,7 @@
     }
     const t0 = performance.now();
     const step = (now) => {
-      const k = Math.min(1, (now - t0) / 700);
+      const k = Math.min(1, (now - t0) / 350);
       const e = 1 - Math.pow(1 - k, 3);
       el.textContent = nf(from + (to - from) * e, digits);
       if (k < 1) el._raf = requestAnimationFrame(step);

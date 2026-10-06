@@ -5,7 +5,8 @@ const fs = require('fs');
 const path = require('path');
 const { COLUMNS } = require('./telemetry');
 
-const ALL_COLS = ['device_id', 'device_ts', 'seq', ...COLUMNS, 'extra'];
+// received_at = momento de la medición (la hora del ESP32 si es confiable; si no, la de llegada)
+const ALL_COLS = ['received_at', 'device_id', 'device_ts', 'seq', ...COLUMNS, 'extra'];
 const STAT_COLS = ['temperature', 'humidity', 'pressure', 'altitude', 'speed', 'battery', 'rssi'];
 
 function mergeExtras(rows, extras) {
@@ -59,7 +60,7 @@ function createPg(connectionString) {
 
         const values = [];
         const rowsSql = readings.map((r, i) => {
-          ALL_COLS.forEach((c) => values.push(c === 'extra' ? JSON.stringify(r.extra || {}) : r[c] ?? null));
+          ALL_COLS.forEach((c) => values.push(c === 'extra' ? JSON.stringify(r.extra || {}) : c === 'received_at' ? r.received_at || new Date() : r[c] ?? null));
           const base = i * ALL_COLS.length;
           return `(${ALL_COLS.map((_, j) => `$${base + j + 1}`).join(',')})`;
         });
@@ -196,8 +197,9 @@ function createMemory() {
     async insertMany(readings) {
       const now = new Date();
       return readings.map((r) => {
-        const row = { id: nextId++, received_at: now };
+        const row = { id: nextId++ };
         ALL_COLS.forEach((c) => (row[c] = c === 'extra' ? r.extra || {} : r[c] ?? null));
+        row.received_at = r.received_at || now;
         telemetry.push(row);
         if (telemetry.length > MAX) telemetry.shift();
         const d = devices.get(r.device_id) || { id: r.device_id, name: r.device_id, first_seen: now, packets: 0 };

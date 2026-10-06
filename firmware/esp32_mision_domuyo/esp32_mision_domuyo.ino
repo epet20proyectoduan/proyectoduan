@@ -1,18 +1,15 @@
 /*
  * ============================================================
  *  Titan ATLAS · Misión Domuyo — Firmware de telemetría
- *  ESP32-S + BMP390 + GPS GY-GPS6MV2 (NEO-6M) + acelerómetro MPU6050
+ *  ESP32-S + BMP390 + GPS GY-GPS6MV2 (NEO-6M) + acelerómetro MPU6050 (opcional)
+ *  Frecuencia: 2 lecturas por segundo (cada 0,5 s)
  * ============================================================
  *
- *  CONEXIONES
- *  ----------
- *  El BMP390 y el MPU6050 comparten el bus I2C (direcciones distintas: 0x77 y 0x68).
- *
- *  BMP390 (I2C)        MPU6050 / GY-521 (I2C)     GPS GY-GPS6MV2 (UART2)
- *    VIN → 3V3           VCC → 3V3                  VCC → 3V3 (o 5V)
- *    GND → GND           GND → GND                  GND → GND
- *    SDA → GPIO 21       SDA → GPIO 21              TX  → GPIO 16 (RX2)
- *    SCL → GPIO 22       SCL → GPIO 22              RX  → GPIO 17 (TX2)
+ *  CONEXIONES (placa ESP32-S de 30 pines)
+ *    BMP390:   VCC → 3V3 · GND → GND · SDA → D21 · SCL → D22
+ *    GPS:      VCC → 3V3 · GND → GND · TX → RX2/D16 · RX → TX2/D17
+ *    MPU6050 (cuando lo tengan): VCC → 3V3 · GND → GND · SDA → D21 · SCL → D22
+ *    No usar TX0/RX0 (son del USB).
  *
  *  LIBRERÍAS (Arduino IDE → Herramientas → Administrar bibliotecas)
  *    - Adafruit BMP3XX Library   (instala también Adafruit Unified Sensor y BusIO)
@@ -25,20 +22,14 @@
  *  ANTES DE COMPILAR: copiar secrets.example.h como secrets.h y completarlo
  *  (red WiFi, URL del servidor y API key). secrets.h no se sube a GitHub.
  *
- *  DATOS QUE ENVÍA (JSON):
- *    temperature, pressure, altitude   → BMP390
- *    alt_rel                           → altura relativa al encendido (BMP390)
- *    accel_x, accel_y, accel_z         → aceleración por eje (m/s²)
- *    g_force                           → aceleración total (en g)
- *    g_max                             → pico de aceleración desde la lectura anterior (g)
- *    pitch, roll                       → inclinación (grados)
- *    rotation                          → velocidad de giro (°/s)
- *    latitude, longitude, gps_altitude → GPS
- *    speed                             → velocidad según el GPS (km/h)
- *    satellites, hdop                  → calidad de la señal GPS
- *    rssi, uptime_s                    → estado del ESP32
- *
- *  Si se corta el WiFi, guarda las lecturas y las envía por lotes al volver.
+ *  CÓMO LOGRA 2 LECTURAS POR SEGUNDO
+ *    - Lee los sensores cada 0,5 s, independientemente de los envíos.
+ *    - Mantiene abierta la conexión HTTPS con el servidor (no la renegocia en cada envío).
+ *    - Manda en un solo paquete todo lo pendiente; si se corta el WiFi, guarda
+ *      hasta 5 minutos de lecturas y las envía al volver.
+ *    - Cada lectura lleva su hora exacta (con milisegundos), así el panel la ubica
+ *      bien aunque llegue en un lote.
+ *    - Configura el GPS NEO-6M para dar posición 2 veces por segundo.
  */
 
 #include <WiFi.h>
@@ -50,15 +41,16 @@
 #include <Adafruit_MPU6050.h>
 #include <TinyGPSPlus.h>
 #include <ArduinoJson.h>
-#include <time.h>
+#include <sys/time.h>
 #include "secrets.h"
 
 // ---------------------------------------------------------------- CONFIGURACIÓN
 #define DEVICE_ID          "titan-atlas-01"
-#define SAMPLE_INTERVAL_MS 2000   // cada cuánto se arma y envía una lectura
+#define SAMPLE_INTERVAL_MS 500    // una lectura cada 0,5 s
+#define SEND_INTERVAL_MS   500    // como máximo un envío cada 0,5 s (con todo lo pendiente)
 #define IMU_INTERVAL_MS    20     // el acelerómetro se lee a 50 Hz para no perder picos
-#define BUFFER_SIZE        150    // lecturas guardadas sin conexión
-#define BATCH_SIZE         30     // lecturas por envío al reconectar
+#define BUFFER_SIZE        600    // lecturas guardadas sin conexión (5 minutos a 2 por segundo)
+#define BATCH_SIZE         40     // lecturas máximas por envío
 
 // I2C (BMP390 + MPU6050)
 #define I2C_SDA        21
@@ -69,6 +61,7 @@
 #define GPS_RX_PIN     16         // al TX del GPS
 #define GPS_TX_PIN     17         // al RX del GPS
 #define GPS_BAUD       9600
+#define GPS_RATE_MS    500        // el GPS calcula la posición cada 0,5 s
 
 // Acelerómetro MPU6050
 #define ACCEL_RANGE    MPU6050_RANGE_8_G      // 2, 4, 8 o 16 G según lo que se espere medir
@@ -82,6 +75,7 @@ Adafruit_MPU6050 mpu;
 TinyGPSPlus gps;
 HardwareSerial GPSSerial(2);
 WiFiClientSecure tls;
+HTTPClient http;
 
 bool bmpOk = false;
 bool mpuOk = false;
@@ -91,14 +85,13 @@ float groundAltitude = NAN;   // altura al encender, para calcular alt_rel
 struct ImuState {
   float ax, ay, az;     // m/s²
   float gx, gy, gz;     // rad/s
-  float gMax;           // pico de g desde la última lectura enviada
+  float gMax;           // pico de g desde la última lectura
 } imu = {NAN, NAN, NAN, NAN, NAN, NAN, 0};
-uint32_t lastImu = 0;
 
 // ---------------------------------------------------------------- LECTURAS
 struct Reading {
   uint32_t seq;
-  time_t   ts;
+  uint64_t tsMs;        // hora de la medición en milisegundos (0 si todavía no hay hora)
   float temperature, pressure, altitude, altRel;
   float accelX, accelY, accelZ, gForce, gMax, pitch, roll, rotation;
   double latitude, longitude;
@@ -111,8 +104,64 @@ struct Reading {
 Reading buffer[BUFFER_SIZE];
 int bufHead = 0, bufCount = 0;
 uint32_t seq = 0;
-uint32_t lastSample = 0;
+uint32_t lastSample = 0, lastSend = 0, lastImu = 0;
 
+// ---------------------------------------------------------------- GPS: configuración UBX
+void sendUbx(const uint8_t *msg, size_t len) {
+  uint8_t a = 0, b = 0;                       // checksum Fletcher de UBX
+  for (size_t i = 0; i < len; i++) { a += msg[i]; b += a; }
+  GPSSerial.write(0xB5);
+  GPSSerial.write(0x62);
+  GPSSerial.write(msg, len);
+  GPSSerial.write(a);
+  GPSSerial.write(b);
+  GPSSerial.flush();
+}
+
+void configureGps() {
+  // Apaga los mensajes NMEA que no se usan (GLL, GSA, GSV, VTG) para que entren
+  // 2 posiciones por segundo a 9600 baudios. Quedan GGA y RMC, que usa TinyGPSPlus.
+  const uint8_t off[][2] = {{0xF0, 0x01}, {0xF0, 0x02}, {0xF0, 0x03}, {0xF0, 0x05}};
+  for (auto &m : off) {
+    uint8_t msg[] = {0x06, 0x01, 0x03, 0x00, m[0], m[1], 0x00};   // CFG-MSG
+    sendUbx(msg, sizeof(msg));
+    delay(30);
+  }
+  // CFG-RATE: medición cada GPS_RATE_MS
+  uint8_t rate[] = {0x06, 0x08, 0x06, 0x00,
+                    (uint8_t)(GPS_RATE_MS & 0xFF), (uint8_t)(GPS_RATE_MS >> 8),
+                    0x01, 0x00,   // 1 medición por solución
+                    0x01, 0x00};  // referencia de tiempo GPS
+  sendUbx(rate, sizeof(rate));
+}
+
+// ---------------------------------------------------------------- HORA
+// Hora en milisegundos: la del reloj interno (sincronizado por internet o por el GPS)
+uint64_t nowMs() {
+  struct timeval tv;
+  gettimeofday(&tv, nullptr);
+  if (tv.tv_sec < 1700000000) return 0;   // todavía sin hora válida
+  return (uint64_t)tv.tv_sec * 1000ULL + tv.tv_usec / 1000;
+}
+
+// Si no hay internet pero el GPS tiene hora, se usa para poner en hora el reloj interno
+void syncClockFromGps() {
+  static uint32_t lastSync = 0;
+  if (nowMs() && millis() - lastSync < 600000) return;   // ya en hora: re-sincroniza cada 10 min
+  if (!gps.date.isValid() || !gps.time.isValid() || gps.date.year() < 2024 || gps.time.age() > 500) return;
+  struct tm t = {};
+  t.tm_year = gps.date.year() - 1900;
+  t.tm_mon  = gps.date.month() - 1;
+  t.tm_mday = gps.date.day();
+  t.tm_hour = gps.time.hour();
+  t.tm_min  = gps.time.minute();
+  t.tm_sec  = gps.time.second();
+  struct timeval tv = {mktime(&t), (suseconds_t)(gps.time.centisecond() * 10000)};
+  settimeofday(&tv, nullptr);
+  lastSync = millis();
+}
+
+// ---------------------------------------------------------------- SENSORES
 void readImu() {
   if (!mpuOk) return;
   sensors_event_t a, g, t;
@@ -127,26 +176,10 @@ void readImu() {
   if (gNow > imu.gMax) imu.gMax = gNow;
 }
 
-// Hora: primero la del GPS; si no hay, la de internet (NTP); si no, 0
-time_t currentTime() {
-  if (gps.date.isValid() && gps.time.isValid() && gps.date.year() >= 2024 && gps.time.age() < 3000) {
-    struct tm t = {};
-    t.tm_year = gps.date.year() - 1900;
-    t.tm_mon  = gps.date.month() - 1;
-    t.tm_mday = gps.date.day();
-    t.tm_hour = gps.time.hour();
-    t.tm_min  = gps.time.minute();
-    t.tm_sec  = gps.time.second();
-    return mktime(&t);   // TZ = UTC (configurado en setup)
-  }
-  time_t now = time(nullptr);
-  return now > 1700000000 ? now : 0;
-}
-
 Reading sample() {
   Reading r;
   r.seq = seq++;
-  r.ts = currentTime();
+  r.tsMs = nowMs();
   r.temperature = r.pressure = r.altitude = r.altRel = NAN;
   r.accelX = r.accelY = r.accelZ = r.gForce = r.gMax = r.pitch = r.roll = r.rotation = NAN;
   r.latitude = r.longitude = NAN;
@@ -162,7 +195,7 @@ Reading sample() {
     r.altRel = r.altitude - groundAltitude;
   }
 
-  // MPU6050
+  // MPU6050 (solo si está conectado)
   if (mpuOk && !isnan(imu.ax)) {
     r.accelX = imu.ax;
     r.accelY = imu.ay;
@@ -177,12 +210,12 @@ Reading sample() {
   }
 
   // GPS
-  if (gps.location.isValid() && gps.location.age() < 5000) {
+  if (gps.location.isValid() && gps.location.age() < 2000) {
     r.latitude  = gps.location.lat();
     r.longitude = gps.location.lng();
   }
-  if (gps.altitude.isValid() && gps.altitude.age() < 5000) r.gpsAltitude = gps.altitude.meters();
-  if (gps.speed.isValid() && gps.speed.age() < 5000)       r.speed = gps.speed.kmph();
+  if (gps.altitude.isValid() && gps.altitude.age() < 2000) r.gpsAltitude = gps.altitude.meters();
+  if (gps.speed.isValid() && gps.speed.age() < 2000)       r.speed = gps.speed.kmph();
   if (gps.satellites.isValid())                            r.satellites = gps.satellites.value();
   if (gps.hdop.isValid() && gps.hdop.value() > 0)          r.hdop = gps.hdop.hdop();
 
@@ -208,7 +241,7 @@ void addIf(JsonObject o, const char *k, double v) {
 void toJson(JsonObject o, const Reading &r) {
   o["device_id"] = DEVICE_ID;
   o["seq"] = r.seq;
-  if (r.ts) o["ts"] = (uint32_t)r.ts;
+  if (r.tsMs) o["ts"] = r.tsMs;   // milisegundos: el servidor ubica cada lectura en su momento exacto
   addIf(o, "temperature", r.temperature);
   addIf(o, "pressure", r.pressure);
   addIf(o, "altitude", r.altitude);
@@ -268,32 +301,34 @@ bool flush() {
   String body;
   serializeJson(doc, body);
 
-  HTTPClient http;
-  http.setTimeout(10000);
+  // La conexión queda abierta entre envíos (setReuse), así cada envío tarda ~100-200 ms
   if (!http.begin(tls, SERVER_URL)) return false;
   http.addHeader("Content-Type", "application/json");
   http.addHeader("X-API-Key", API_KEY);
+  uint32_t t0 = millis();
   int code = http.POST(body);
-  String resp = http.getString();
+  String resp = code > 0 ? http.getString() : "";
   http.end();
 
   if (code == 201) {
     bufHead = (bufHead + n) % BUFFER_SIZE;
     bufCount -= n;
-    Serial.printf("✔ %d lectura(s) enviada(s) · pendientes: %d\n", n, bufCount);
+    Serial.printf("  ✔ %d enviada(s) en %lu ms · pendientes: %d\n", n, millis() - t0, bufCount);
     return true;
   }
+
   if (code < 0) {
     // Diagnóstico: por qué no se pudo conectar al servidor
     char err[120] = "";
     tls.lastError(err, sizeof(err));
     IPAddress ip;
     bool dns = WiFi.hostByName("mision-domuyo.up.railway.app", ip);
-    Serial.printf("✘ No se pudo conectar: %s · TLS: %s · DNS: %s · señal %d dBm\n",
+    Serial.printf("  ✘ No se pudo conectar: %s · TLS: %s · DNS: %s · señal %d dBm\n",
                   HTTPClient::errorToString(code).c_str(), err,
                   dns ? ip.toString().c_str() : "FALLÓ", WiFi.RSSI());
+    tls.stop();   // la próxima vez abre una conexión nueva
   } else {
-    Serial.printf("✘ HTTP %d: %s\n", code, resp.c_str());
+    Serial.printf("  ✘ HTTP %d: %s\n", code, resp.c_str());
   }
   if (code == 400) {            // datos inválidos: se descartan para no trabar la cola
     bufHead = (bufHead + n) % BUFFER_SIZE;
@@ -313,7 +348,7 @@ void setup() {
   Wire.begin(I2C_SDA, I2C_SCL);
   Wire.setClock(400000);
 
-  // BMP390
+  // BMP390 (a 50 Hz internos, con filtro suave para lecturas estables a 2 Hz)
   bmpOk = bmp.begin_I2C(0x77) || bmp.begin_I2C(0x76);
   if (bmpOk) {
     bmp.setTemperatureOversampling(BMP3_OVERSAMPLING_2X);
@@ -326,7 +361,7 @@ void setup() {
     Serial.println("⚠ BMP390 no encontrado: revisar SDA/SCL y alimentación");
   }
 
-  // MPU6050
+  // MPU6050 (opcional)
   mpuOk = mpu.begin(0x68) || mpu.begin(0x69);
   if (mpuOk) {
     mpu.setAccelerometerRange(ACCEL_RANGE);
@@ -334,15 +369,19 @@ void setup() {
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
     Serial.println("MPU6050 OK");
   } else {
-    Serial.println("⚠ MPU6050 no encontrado: revisar SDA/SCL y alimentación");
+    Serial.println("Acelerómetro no conectado (se omite)");
   }
 
-  // GPS
+  // GPS a 2 Hz
   GPSSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-  Serial.println("GPS iniciado (el primer fix puede tardar 1-5 min a cielo abierto)");
+  delay(100);
+  configureGps();
+  Serial.println("GPS iniciado a 2 Hz (el primer fix puede tardar 1-15 min a cielo abierto)");
 
-  // WiFi + HTTPS
+  // WiFi + HTTPS con conexión persistente
   tls.setInsecure();           // para validar el certificado: tls.setCACert(ROOT_CA)
+  http.setReuse(true);
+  http.setTimeout(5000);
   WiFi.mode(WIFI_STA);
   WiFi.setTxPower(WIFI_POWER_8_5dBm);   // menos potencia = menos consumo (evita el brownout)
   delay(200);
@@ -354,15 +393,19 @@ void setup() {
 void loop() {
   // El GPS manda datos todo el tiempo: hay que leerlos siempre
   while (GPSSerial.available()) gps.encode(GPSSerial.read());
+  syncClockFromGps();
+
+  uint32_t now = millis();
 
   // Acelerómetro a 50 Hz para registrar los picos de G
-  if (millis() - lastImu >= IMU_INTERVAL_MS) {
-    lastImu = millis();
+  if (now - lastImu >= IMU_INTERVAL_MS) {
+    lastImu = now;
     readImu();
   }
 
-  if (millis() - lastSample >= SAMPLE_INTERVAL_MS) {
-    lastSample = millis();
+  // Una lectura cada 0,5 s, a ritmo fijo
+  if (now - lastSample >= SAMPLE_INTERVAL_MS) {
+    lastSample = (now - lastSample > 2 * SAMPLE_INTERVAL_MS) ? now : lastSample + SAMPLE_INTERVAL_MS;
     Reading r = sample();
     pushBuffer(r);
 
@@ -377,10 +420,12 @@ void loop() {
       Serial.printf("  GPS: conectado OK, buscando satelites (%d a la vista)\n", max(r.satellites, 0));
     else
       Serial.printf("  GPS: %.6f, %.6f (%d satelites)\n", r.latitude, r.longitude, r.satellites);
+  }
 
+  // Envío: como máximo cada 0,5 s, con todo lo que esté pendiente
+  if (bufCount && now - lastSend >= SEND_INTERVAL_MS) {
+    lastSend = now;
     connectWiFi();
-    while (bufCount && flush()) {
-      while (GPSSerial.available()) gps.encode(GPSSerial.read());
-    }
+    flush();
   }
 }

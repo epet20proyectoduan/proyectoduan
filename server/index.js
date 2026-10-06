@@ -142,6 +142,11 @@ api.post('/telemetry', rateLimit, requireKey, asyncH(async (req, res) => {
   for (let i = 0; i < items.length; i++) {
     const r = normalize(items[i], fallbackId);
     if (!r.ok) return res.status(400).json({ error: `Lectura ${i}: ${r.error}` });
+    // Se usa la hora de medición del ESP32 si es confiable (no futura y de menos de 24 h),
+    // así las lecturas enviadas en lote quedan en su momento real
+    const now = Date.now();
+    const ts = r.reading.device_ts?.getTime();
+    r.reading.received_at = ts && ts <= now + 5000 && now - ts < 86_400_000 ? r.reading.device_ts : new Date(now);
     readings.push(r.reading);
     r.warnings.forEach((w) => warnings.push(`Lectura ${i}: ${w}`));
   }
