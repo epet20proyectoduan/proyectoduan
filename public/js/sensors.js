@@ -61,13 +61,28 @@ window.PHYS = (() => {
     },
     {
       key: 'altitude', label: 'Altitud', unit: 'm', digits: 0, group: 'posicion', color: '#34D399',
-      info: 'Altura sobre el nivel del mar, medida por el GPS o calculada a partir de la presión atmosférica.',
+      info: 'Altura sobre el nivel del mar calculada por el BMP390 a partir de la presión atmosférica. Puede variar unos metros si cambia el clima.',
       insight: (r) => (r.altitude == null || r.pressure != null ? null
         : `Presión estimada a esta altura: ${nf(pressureAt(r.altitude), 0)} hPa`),
     },
     {
+      key: 'alt_rel', label: 'Altura relativa', unit: 'm', digits: 1, group: 'posicion', color: '#86EFAC',
+      info: 'Cuánto subió o bajó la estación desde que se encendió, según el barómetro. Es más precisa que la altitud absoluta para medir cambios de altura.',
+      insight: (r) => (r.alt_rel == null ? null : r.alt_rel >= 0 ? `${nf(r.alt_rel, 1)} m por encima del punto de inicio` : `${nf(-r.alt_rel, 1)} m por debajo del punto de inicio`),
+    },
+    {
       key: 'speed', label: 'Velocidad', unit: 'km/h', digits: 1, group: 'posicion', color: '#F472B6',
-      info: 'Velocidad de desplazamiento calculada por el GPS a partir de posiciones sucesivas.',
+      info: 'Velocidad medida por el velocímetro: cuenta los pulsos del sensor en cada vuelta y los convierte a km/h según la circunferencia configurada en el firmware.',
+      insight: (r) => (r.speed == null ? null : `${nf(r.speed / 3.6, 2)} m/s`),
+    },
+    {
+      key: 'gps_speed', label: 'Velocidad GPS', unit: 'km/h', digits: 1, group: 'posicion', color: '#F9A8D4',
+      info: 'Velocidad calculada por el GPS a partir de posiciones sucesivas. Sirve para comparar con el velocímetro; a baja velocidad el GPS es menos preciso.',
+    },
+    {
+      key: 'gps_altitude', label: 'Altitud GPS', unit: 'm', digits: 0, group: 'posicion', color: '#5EEAD4',
+      info: 'Altura sobre el nivel del mar según el GPS. Suele tener un error de 10 a 20 m; se usa para contrastar con la del barómetro.',
+      insight: (r) => (r.gps_altitude == null || r.altitude == null ? null : `Diferencia con el barómetro: ${nf(r.gps_altitude - r.altitude, 0)} m`),
     },
     { key: 'latitude', label: 'Latitud', unit: '°', digits: 5, group: 'posicion', chart: false, card: false },
     { key: 'longitude', label: 'Longitud', unit: '°', digits: 5, group: 'posicion', chart: false, card: false },
@@ -81,5 +96,19 @@ window.PHYS = (() => {
       insight: (r) => (r.rssi == null ? null
         : r.rssi >= -60 ? 'Señal excelente' : r.rssi >= -70 ? 'Señal buena' : r.rssi >= -80 ? 'Señal regular' : 'Señal débil'),
     },
+    {
+      key: 'satellites', label: 'Satélites GPS', unit: '', digits: 0, group: 'sistema', color: '#93C5FD', chart: false,
+      info: 'Cantidad de satélites que usa el GPS. Con 4 o más calcula posición y altura; con 6 o más la posición es confiable. Necesita cielo abierto.',
+      insight: (r) => (r.satellites == null ? null
+        : r.satellites >= 6 ? 'Posición confiable' : r.satellites >= 4 ? 'Posición aceptable' : 'Sin posición: buscando satélites'),
+    },
+    {
+      key: 'hdop', label: 'Precisión GPS (HDOP)', unit: '', digits: 1, group: 'sistema', color: '#C4B5FD', chart: false,
+      info: 'Indica qué tan buena es la geometría de los satélites. Cuanto más bajo, mejor: menos de 1 es ideal, de 1 a 2 excelente, de 2 a 5 buena y más de 5 pobre.',
+      insight: (r) => (r.hdop == null ? null
+        : r.hdop < 1 ? 'Precisión ideal' : r.hdop <= 2 ? 'Precisión excelente' : r.hdop <= 5 ? 'Precisión buena' : 'Precisión pobre'),
+    },
+    { key: 'uptime_s', label: 'Tiempo encendido', unit: 's', digits: 0, group: 'sistema', color: '#94A3B8', chart: false, card: false },
+    { key: 'seq', label: 'Paquete', unit: '', digits: 0, card: false, chart: false },
   ];
 })();

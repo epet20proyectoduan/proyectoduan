@@ -7,3 +7,6 @@ node_modules/
 Thumbs.db
 .claude/
 .railway-api-key.txt
+
+# Credenciales del firmware
+firmware/**/secrets.h

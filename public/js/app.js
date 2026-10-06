@@ -31,7 +31,6 @@
     fields: [],
     bucket: null,
     streamOk: false,
-    stage: 'esp',
   };
 
   // ---------------------------------------------------------- formato
@@ -160,127 +159,6 @@
 
   const hasField = (k) => state.fields.some((f) => f.key === k);
 
-  // ---------------------------------------------------------- recorrido del dato
-  const ICONS = {
-    sensor: '<path d="M14 14.8V5a2 2 0 1 0-4 0v9.8a4 4 0 1 0 4 0Z"/><path d="M12 9v7"/>',
-    esp: '<rect x="7" y="7" width="10" height="10" rx="1"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/>',
-    net: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
-    server: '<rect x="4" y="4" width="16" height="6" rx="1"/><rect x="4" y="14" width="16" height="6" rx="1"/><path d="M8 7h.01M8 17h.01"/>',
-    db: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
-    panel: '<rect x="3" y="4" width="18" height="13" rx="1"/><path d="M8 21h8M12 17v4M7 13l3-3 3 2 4-5"/>',
-  };
-
-  const STAGES = [
-    {
-      id: 'sensor', title: 'Sensores',
-      sub: () => (state.fields.length ? `${state.fields.length} variables` : 'sin lecturas'),
-      text: () => 'Los sensores convierten un fenómeno físico —temperatura, presión, posición— en una señal eléctrica que el microcontrolador puede leer. '
-        + (state.fields.length ? `Hoy llegan: ${state.fields.map((f) => f.label.toLowerCase()).join(', ')}.` : 'Todavía no se recibió ninguna variable.'),
-    },
-    {
-      id: 'esp', title: 'ESP32',
-      sub: () => state.lastRow?.device_id || 'esperando',
-      text: () => 'Microcontrolador con WiFi. Lee los sensores cada pocos segundos y arma un mensaje en formato JSON. Si pierde la conexión guarda las lecturas en memoria y las envía juntas cuando vuelve la señal.',
-      code: () => state.lastRow && JSON.stringify(compactPacket(state.lastRow)),
-    },
-    {
-      id: 'net', title: 'Internet',
-      sub: () => (state.lastAt ? relTime(state.lastAt) : 'HTTPS'),
-      text: () => 'El mensaje viaja cifrado por HTTPS hasta el servidor. Lleva una clave (API key) en el encabezado para que solo las estaciones del equipo puedan escribir datos.',
-      code: () => `POST ${location.host}/api/telemetry\nX-API-Key: ••••••••`,
-    },
-    {
-      id: 'server', title: 'Servidor',
-      sub: () => 'Node.js · Railway',
-      text: () => 'Un programa en Node.js recibe cada mensaje, verifica la clave, interpreta los nombres de los campos y descarta valores físicamente imposibles (por ejemplo, una humedad de 140 %). Después lo guarda y lo reenvía a los navegadores conectados.',
-    },
-    {
-      id: 'db', title: 'Base de datos',
-      sub: () => `${nf(state.packets)} registros`,
-      text: () => `Cada lectura se guarda con la hora exacta de llegada en ${state.config?.db === 'postgresql' ? 'PostgreSQL' : 'memoria (modo desarrollo)'}. `
-        + 'Las variables conocidas tienen su propia columna; las nuevas se guardan en un campo flexible (JSONB), así se pueden agregar sensores sin modificar la base.',
-    },
-    {
-      id: 'panel', title: 'Este panel',
-      sub: () => (state.streamOk ? 'conectado en vivo' : 'reconectando'),
-      text: () => 'La página mantiene una conexión abierta con el servidor (Server-Sent Events). Cuando llega un paquete, se actualiza al instante sin recargar: lo vas a ver recorrer este diagrama.',
-    },
-  ];
-
-  function compactPacket(r) {
-    const o = { device_id: r.device_id };
-    for (const k of CORE) if (r[k] != null) o[k] = r[k];
-    Object.assign(o, r.extra || {});
-    return o;
-  }
-
-  function buildPipeline() {
-    $('#pipeline').innerHTML = STAGES.map((s, i) => `
-      <li class="node" role="tab" tabindex="0" data-stage="${s.id}" style="--i:${i}" aria-selected="${s.id === state.stage}">
-        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[s.id]}</svg></span>
-        <span class="txt"><span class="t">${s.title}</span><span class="s" data-sub></span></span>
-        <span class="step">0${i + 1}</span>
-        ${i < STAGES.length - 1 ? '<span class="wire" aria-hidden="true"><i></i></span>' : ''}
-      </li>`).join('');
-
-    $('#pipeline').addEventListener('click', (e) => {
-      const n = e.target.closest('.node');
-      if (n) selectStage(n.dataset.stage);
-    });
-    $('#pipeline').addEventListener('keydown', (e) => {
-      const n = e.target.closest('.node');
-      if (!n) return;
-      const i = STAGES.findIndex((s) => s.id === n.dataset.stage);
-      let j = null;
-      if (e.key === 'ArrowRight') j = Math.min(STAGES.length - 1, i + 1);
-      if (e.key === 'ArrowLeft') j = Math.max(0, i - 1);
-      if (e.key === 'Enter' || e.key === ' ') j = i;
-      if (j === null) return;
-      e.preventDefault();
-      selectStage(STAGES[j].id);
-      $(`.node[data-stage="${STAGES[j].id}"]`).focus();
-    });
-  }
-
-  function selectStage(id) {
-    state.stage = id;
-    $$('.node').forEach((n) => n.setAttribute('aria-selected', String(n.dataset.stage === id)));
-    renderStageDetail(true);
-  }
-
-  function renderStageDetail(animate) {
-    const i = STAGES.findIndex((s) => s.id === state.stage);
-    const s = STAGES[i];
-    const code = s.code?.();
-    const el = $('#nodeDetail');
-    el.innerHTML = `<span class="n">0${i + 1}</span><h3>${s.title}</h3><div><p>${esc(s.text())}</p>${code ? `<pre class="packet"><code>${esc(code)}</code></pre>` : ''}</div>`;
-    if (animate) {
-      el.classList.remove('swap');
-      void el.offsetWidth;
-      el.classList.add('swap');
-    }
-  }
-
-  function renderPipeline() {
-    for (const s of STAGES) {
-      const n = $(`.node[data-stage="${s.id}"]`);
-      if (!n) continue;
-      $('[data-sub]', n).textContent = s.sub();
-      n.classList.toggle('waiting-node', s.id === 'esp' && !state.lastRow);
-    }
-  }
-
-  let flowTimer;
-  function pulsePipeline() {
-    if (REDUCED) return;
-    const p = $('#pipeline');
-    p.classList.remove('flow');
-    void p.offsetWidth;
-    p.classList.add('flow');
-    clearTimeout(flowTimer);
-    flowTimer = setTimeout(() => p.classList.remove('flow'), 2400);
-  }
-
   // ---------------------------------------------------------- enlace
   function setLink(name, label) {
     const el = $('#linkStatus');
@@ -371,7 +249,8 @@
       if (range) {
         const min = state.stats[`${f.key}_min`];
         const max = state.stats[`${f.key}_max`];
-        range.textContent = min == null ? '' : `mín ${fmt(min, f)} · máx ${fmt(max, f)} · ${RANGE_LABEL[state.range]}`;
+        range.textContent = min == null ? '' : `mín ${fmt(min, f)} · máx ${fmt(max, f)}`;
+        range.title = `Mínimo y máximo de ${RANGE_LABEL[state.range]}`;
       }
 
       let text = '';
@@ -419,7 +298,7 @@
   function renderAltimeter() {
     const show = hasField('altitude');
     $('#altimeter').hidden = !show;
-    $('#readingsLayout').classList.toggle('no-alt', !show);
+    updateSide();
     if (!show) return;
 
     const pts = state.rows.filter((r) => r.altitude != null).slice(0, 100).reverse();
@@ -618,6 +497,7 @@
   function renderTrack(fit) {
     const has = state.track.length > 0;
     $('#mapa').hidden = !has;
+    updateSide();
     if (!has) return;
     ensureMap();
     if (!map) return;
@@ -665,10 +545,17 @@
   // ---------------------------------------------------------- visibilidad
   function renderVisibility() {
     const hasData = state.rows.length > 0;
-    $('#waiting').hidden = state.packets > 0;
-    $('#lecturas').hidden = !hasData;
-    $('#evolucion').hidden = !hasData || charts.size === 0;
-    $('#registros').hidden = !hasData;
+    $('#waiting').hidden = hasData;
+    $('#dashboard').hidden = !hasData;
+    $('.dash-main').hidden = charts.size === 0;
+  }
+
+  // La columna derecha (altímetro y mapa) solo ocupa lugar si tiene algo que mostrar
+  function updateSide() {
+    const empty = $('#altimeter').hidden && $('#mapa').hidden;
+    $('#dashSide').hidden = empty;
+    $('#dashGrid').classList.toggle('no-side', empty);
+    if (map) setTimeout(() => map.invalidateSize(), 50);
   }
 
   // ---------------------------------------------------------- dispositivos
@@ -705,8 +592,8 @@
       state.fields = [];
       discover(rows);
       // Las secciones se muestran antes de crear los gráficos para que tengan tamaño
-      $('#lecturas').hidden = !rows.length;
-      $('#evolucion').hidden = !rows.length;
+      $('#dashboard').hidden = !rows.length;
+      $('#waiting').hidden = !!rows.length;
       buildReadings();
       buildCharts();
       renderVisibility();
@@ -714,8 +601,6 @@
       renderSeries(series.points, series.bucket);
       renderTable();
       renderTrack(fit);
-      renderPipeline();
-      renderStageDetail(false);
       refreshLink();
     } catch (err) {
       console.error(err);
@@ -731,19 +616,16 @@
     es.onopen = () => {
       state.streamOk = true;
       refreshLink();
-      renderPipeline();
     };
     es.onerror = () => {
       state.streamOk = false;
       refreshLink();
-      renderPipeline();
     };
     es.addEventListener('telemetry', (ev) => {
       const row = JSON.parse(ev.data);
       state.packets += 1;
-      pulsePipeline();
       if (![...$('#deviceSelect').options].some((o) => o.value === row.device_id)) loadDevices().catch(() => {});
-      if (state.device && row.device_id !== state.device) return renderPipeline();
+      if (state.device && row.device_id !== state.device) return;
 
       // Una variable nueva obliga a rearmar tarjetas y gráficos
       if (discover([row])) return loadAll({ fit: state.track.length === 0 });
@@ -773,8 +655,6 @@
         renderTrack(state.track.length === 1);
       }
       renderVisibility();
-      renderPipeline();
-      if (['esp', 'db', 'net', 'sensor'].includes(state.stage)) renderStageDetail(false);
       refreshLink();
     });
   }
@@ -788,32 +668,7 @@
     thumb.style.transform = `translateX(${b.offsetLeft}px)`;
   }
 
-  function observeSections() {
-    if (!('IntersectionObserver' in window)) {
-      $$('.reveal').forEach((el) => el.classList.add('in'));
-      return;
-    }
-    const io = new IntersectionObserver((entries) => {
-      for (const e of entries) if (e.isIntersecting) {
-        e.target.classList.add('in');
-        io.unobserve(e.target);
-      }
-    }, { rootMargin: '0px 0px -40px 0px' });
-    $$('.reveal').forEach((el) => io.observe(el));
-
-    const links = new Map($$('.nav a[href^="#"]').map((a) => [a.getAttribute('href').slice(1), a]));
-    const spy = new IntersectionObserver((entries) => {
-      for (const e of entries) if (e.isIntersecting) {
-        links.forEach((a) => a.classList.remove('active'));
-        links.get(e.target.id)?.classList.add('active');
-      }
-    }, { rootMargin: '-45% 0px -50% 0px' });
-    links.forEach((_, id) => { const s = document.getElementById(id); if (s) spy.observe(s); });
-  }
-
   function bindUi() {
-    buildPipeline();
-    renderStageDetail(false);
 
     $('#deviceSelect').addEventListener('change', (e) => {
       state.device = e.target.value;
@@ -843,11 +698,9 @@
 
     $('#year').textContent = new Date().getFullYear();
     $('#endpointUrl').textContent = `${location.origin}/api/telemetry`;
-    observeSections();
 
     setInterval(() => {
       refreshLink();
-      renderPipeline();
       if (LIVE_APPEND.has(state.range) && charts.size) {
         setChartWindow();
         charts.forEach((c) => c.update('none'));
