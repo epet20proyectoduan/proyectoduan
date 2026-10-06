@@ -276,7 +276,18 @@ bool flush() {
     Serial.printf("✔ %d lectura(s) enviada(s) · pendientes: %d\n", n, bufCount);
     return true;
   }
-  Serial.printf("✘ HTTP %d: %s\n", code, resp.c_str());
+  if (code < 0) {
+    // Diagnóstico: por qué no se pudo conectar al servidor
+    char err[120] = "";
+    tls.lastError(err, sizeof(err));
+    IPAddress ip;
+    bool dns = WiFi.hostByName("mision-domuyo.up.railway.app", ip);
+    Serial.printf("✘ No se pudo conectar: %s · TLS: %s · DNS: %s · señal %d dBm\n",
+                  HTTPClient::errorToString(code).c_str(), err,
+                  dns ? ip.toString().c_str() : "FALLÓ", WiFi.RSSI());
+  } else {
+    Serial.printf("✘ HTTP %d: %s\n", code, resp.c_str());
+  }
   if (code == 400) {            // datos inválidos: se descartan para no trabar la cola
     bufHead = (bufHead + n) % BUFFER_SIZE;
     bufCount -= n;
