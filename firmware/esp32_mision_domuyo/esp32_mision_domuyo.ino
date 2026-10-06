@@ -286,7 +286,7 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
       (r == 202 || r == 15 || r == 204) ? "contraseña incorrecta" :
       r == 203 ? "la red rechazó la conexión" :
       r == 200 ? "señal muy débil (acercar el ESP32)" :
-      r == 8   ? "desconexión normal" : "otro motivo";
+      (r == 8 || r == 36) ? "reintentando conexión" : "otro motivo";
     Serial.printf("WiFi desconectado · motivo %u: %s\n", r, why);
   }
 }
