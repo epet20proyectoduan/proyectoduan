@@ -22,7 +22,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
-  <link rel="stylesheet" href="/css/styles.css?v=10">
+  <link rel="stylesheet" href="/css/styles.css?v=12">
 </head>
 <body>
   <header class="topbar">
@@ -116,12 +116,24 @@
             </div>
           </section>
 
-          <section class="panel map-panel" id="mapa" hidden>
-            <div class="panel-head"><span>Posición</span><span class="hint" id="gpsInfo"></span></div>
-            <div id="map" role="region" aria-label="Mapa"></div>
-          </section>
         </aside>
       </div>
+
+      <section class="gps-section" id="mapa" hidden>
+        <div class="dash-head"><h2>Ubicación GPS</h2><span class="hint" id="gpsInfo"></span></div>
+        <div class="panel gps-panel">
+          <div id="map" role="region" aria-label="Mapa con la ubicación del ESP32"></div>
+          <div class="gps-hud" id="gpsHud" aria-live="polite"></div>
+          <button class="gps-center" id="gpsCenter" type="button" hidden>◎ Centrar en el ESP32</button>
+          <div class="gps-wait" id="gpsWait" hidden>
+            <div class="gps-wait-card">
+              <span class="radar" aria-hidden="true"></span>
+              <b id="gpsWaitTitle">Buscando satélites…</b>
+              <p id="gpsWaitText"></p>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section class="registros" id="registros">
         <div class="dash-head"><h2>Registros</h2><span class="hint">Últimos 100 · hora local</span></div>
@@ -146,7 +158,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
-  <script src="/js/sensors.js?v=10"></script>
-  <script src="/js/app.js?v=10" defer></script>
+  <script src="/js/sensors.js?v=12"></script>
+  <script src="/js/app.js?v=12" defer></script>
 </body>
 </html>

@@ -257,3 +257,44 @@ table.data { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 html { background: var(--bg); }
 body { min-height: 100vh; display: flex; flex-direction: column; }
 body > main { flex: 1; width: 100%; }
+
+/* ---------- Mapa GPS ---------- */
+.gps-section { margin-top: 22px; }
+.gps-panel { position: relative; overflow: hidden; isolation: isolate; z-index: 0; }
+.gps-panel #map { height: 440px; background: #0d1626; }
+.gps-hud { position: absolute; top: 12px; left: 12px; z-index: 500; display: flex; flex-wrap: wrap; gap: 6px; max-width: calc(100% - 80px); pointer-events: none; }
+.gps-hud .chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px;
+  font: 500 12px var(--mono); color: var(--text); background: rgba(10, 17, 32, .82);
+  border: 1px solid var(--border-strong); backdrop-filter: blur(6px);
+}
+.gps-hud .chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.gps-hud .chip.ok i { background: var(--ok); box-shadow: 0 0 0 3px rgba(52, 211, 153, .25); }
+.gps-hud .chip.warn i { background: var(--warn); animation: blink 1.4s ease-in-out infinite; }
+@keyframes blink { 50% { opacity: .3; } }
+.gps-center {
+  position: absolute; bottom: 92px; right: 10px; z-index: 500; padding: 7px 12px; border-radius: 999px; cursor: pointer;
+  font: 500 12.5px var(--font); color: #06202e; background: var(--data); border: 0; box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
+}
+.gps-center:hover { background: #7dd3fc; }
+.gps-wait { position: absolute; inset: 0; z-index: 450; display: grid; place-items: center; background: rgba(10, 17, 32, .55); pointer-events: none; }
+.gps-wait-card { text-align: center; padding: 18px 22px; max-width: 340px; border-radius: 10px; background: rgba(16, 26, 46, .92); border: 1px solid var(--border-strong); }
+.gps-wait-card b { display: block; font-size: 14px; margin-top: 10px; }
+.gps-wait-card p { margin-top: 4px; font-size: 12.5px; color: var(--text-2); }
+.radar { position: relative; display: inline-block; width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(56, 189, 248, .45);
+  background: radial-gradient(circle, rgba(56, 189, 248, .5) 0 3px, transparent 4px), repeating-radial-gradient(circle, transparent 0 10px, rgba(56, 189, 248, .18) 10px 11px); }
+.radar::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(from 0deg, rgba(56, 189, 248, .55), transparent 25%); animation: sweep 2s linear infinite; }
+@keyframes sweep { to { transform: rotate(360deg); } }
+
+/* Marcador del ESP32: punto, pulso y flecha de rumbo */
+.gps-marker { position: relative; width: 44px; height: 44px; }
+.gps-marker .dot { position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--accent); border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); }
+.gps-marker .pulse { position: absolute; inset: 6px; border-radius: 50%; background: rgba(255, 107, 53, .35); animation: gpsPulse 2s ease-out infinite; }
+.gps-marker .heading { position: absolute; inset: 0; transition: transform .8s var(--ease), opacity .3s; opacity: 0; }
+.gps-marker .heading::before { content: ''; position: absolute; left: 50%; top: -2px; margin-left: -7px; border: 7px solid transparent; border-bottom: 12px solid var(--accent); border-top: 0; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .5)); }
+.gps-marker.stale .dot { background: var(--muted); }
+.gps-marker.stale .pulse { animation: none; opacity: 0; }
+@keyframes gpsPulse { 0% { transform: scale(.5); opacity: .9; } 100% { transform: scale(1.6); opacity: 0; } }
+.pin-start { width: 12px; height: 12px; border-radius: 3px; transform: rotate(45deg); background: #fff; border: 3px solid var(--ok); }
+.leaflet-container { background: #0d1626; }
+@media (max-width: 620px) { .gps-panel #map { height: 340px; } .gps-center { bottom: 86px; } }
