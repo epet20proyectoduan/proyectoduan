@@ -326,6 +326,8 @@ void setup() {
   // WiFi + HTTPS
   tls.setInsecure();           // para validar el certificado: tls.setCACert(ROOT_CA)
   WiFi.mode(WIFI_STA);
+  WiFi.setTxPower(WIFI_POWER_8_5dBm);   // menos potencia = menos consumo (evita el brownout)
+  delay(200);
   WiFi.setAutoReconnect(true);
   WiFi.onEvent(onWiFiEvent);
   connectWiFi();
