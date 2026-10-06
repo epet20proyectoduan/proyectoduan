@@ -3,6 +3,7 @@
 Plataforma de telemetría del equipo Titan ATLAS para la competencia Misión Domuyo.
 
 **Panel en producción:** https://mision-domuyo.up.railway.app · envío de datos: `POST https://mision-domuyo.up.railway.app/api/telemetry`
+
 Un ESP32 envía lecturas por HTTPS → servidor Node.js en Railway → PostgreSQL → centro de control web en tiempo real.
 
 ```
