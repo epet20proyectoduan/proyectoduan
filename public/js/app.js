@@ -14,6 +14,8 @@
   const CATALOG = new Map((window.SENSORS || []).map((s, i) => [s.key, { ...s, order: i }]));
   const GROUP_ORDER = { ambiente: 0, posicion: 1, sistema: 2 };
   const PHYS = window.PHYS;
+  const EXTRA_COLORS = ['#60A5FA', '#F87171', '#4ADE80', '#E879F9', '#FB923C', '#2DD4BF', '#C084FC', '#FDE047'];
+  let extraColorIdx = 0;
 
   const state = {
     device: '',
@@ -115,6 +117,7 @@
       card: c?.card !== false,
       chart: c?.chart !== false,
       group: c?.group || 'zz',
+      color: c?.color || EXTRA_COLORS[extraColorIdx++ % EXTRA_COLORS.length],
       order: c ? c.order : 1000,
       numeric: true,
     };
@@ -297,7 +300,7 @@
     $('#readings').innerHTML = state.fields
       .filter((f) => f.card)
       .map((f, i) => `
-        <article class="reading" data-key="${esc(f.key)}" style="--i:${i}">
+        <article class="reading" data-key="${esc(f.key)}" style="--i:${i};--c:${f.color}">
           <header>
             <span class="name">${esc(f.label)}</span>
             ${f.info ? `<button class="info-btn" type="button" aria-expanded="false" aria-controls="ex-${esc(f.key)}" title="¿Qué mide?">?</button>` : ''}
@@ -400,29 +403,17 @@
   }
 
   // ---------------------------------------------------------- altímetro
-  const RIDGE = [[40, 330], [95, 252], [120, 234], [150, 172], [178, 122], [196, 72], [210, 38]];
-  const altY = (a) => 330 - (Math.max(0, Math.min(5000, a)) * 292) / PHYS.SUMMIT;
-  function ridgeX(y) {
-    for (let i = 1; i < RIDGE.length; i++) {
-      const [x0, y0] = RIDGE[i - 1];
-      const [x1, y1] = RIDGE[i];
-      if (y <= y0 && y >= y1) return x0 + ((y0 - y) / (y0 - y1)) * (x1 - x0);
-    }
-    return y < 38 ? 210 : 40;
-  }
+  // Perfil de altitud dibujado con las lecturas reales (sin referencias fijas).
+  const ALT = { x0: 36, x1: 312, y0: 16, y1: 224 };
 
-  function buildAltGrid() {
-    let g = '<g class="grid">';
-    for (let a = 1000; a <= 4000; a += 1000) {
-      const y = altY(a);
-      g += `<line x1="40" x2="320" y1="${y}" y2="${y}"/><text x="34" y="${y + 3.5}" text-anchor="end">${a / 1000}k</text>`;
+  function niceRange(lo, hi) {
+    if (hi - lo < 20) {
+      const mid = (lo + hi) / 2;
+      lo = mid - 10;
+      hi = mid + 10;
     }
-    $('#altGrid').innerHTML = g + '</g>';
-  }
-
-  function lastAltitude() {
-    if (state.lastRow?.altitude != null) return state.lastRow;
-    return state.rows.find((r) => r.altitude != null) || null;
+    const pad = (hi - lo) * 0.12;
+    return [lo - pad, hi + pad];
   }
 
   function renderAltimeter() {
@@ -430,22 +421,44 @@
     $('#altimeter').hidden = !show;
     $('#readingsLayout').classList.toggle('no-alt', !show);
     if (!show) return;
-    const r = lastAltitude();
-    if (!r) return;
-    const alt = r.altitude;
-    const y = altY(alt);
-    $('#altMarker').style.transform = `translate(${ridgeX(y)}px, ${y}px)`;
-    const max = state.totals.altitude_max;
-    $('#altMax').style.transform = `translate(0px, ${altY(max ?? alt)}px)`;
 
-    tween($('#altNow'), alt, 0);
-    $('#altBar').style.width = `${Math.max(0, Math.min(100, (alt / PHYS.SUMMIT) * 100))}%`;
-    const left = PHYS.SUMMIT - alt;
-    $('#altLeft').textContent = (left <= 10 ? 'Cumbre alcanzada' : `Faltan ${nf(left)} m para la cumbre`)
-      + (max != null ? ` · máx. ${nf(max)} m` : '');
+    const pts = state.rows.filter((r) => r.altitude != null).slice(0, 100).reverse();
+    if (!pts.length) return;
+    const vals = pts.map((r) => r.altitude);
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const [a, b] = niceRange(lo, hi);
+    const X = (i) => ALT.x0 + (pts.length === 1 ? (ALT.x1 - ALT.x0) : (i / (pts.length - 1)) * (ALT.x1 - ALT.x0));
+    const Y = (v) => ALT.y1 - ((v - a) / (b - a)) * (ALT.y1 - ALT.y0);
+
+    // Grilla con 4 valores
+    let g = '';
+    for (let k = 0; k <= 3; k++) {
+      const v = a + ((b - a) * k) / 3;
+      const y = Y(v);
+      g += `<line x1="${ALT.x0}" x2="${ALT.x1}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/><text x="${ALT.x0 - 5}" y="${(y + 3.5).toFixed(1)}" text-anchor="end">${nf(v)}</text>`;
+    }
+    $('#altGrid').innerHTML = g;
+
+    const xy = pts.map((r, i) => [X(i), Y(r.altitude)]);
+    if (xy.length === 1) xy.unshift([ALT.x0, xy[0][1]]);
+    const line = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join('');
+    $('#altLine').setAttribute('d', line);
+    $('#altArea').setAttribute('d', `${line}L${ALT.x1} ${ALT.y1}L${xy[0][0].toFixed(1)} ${ALT.y1}Z`);
+
+    const last = xy[xy.length - 1];
+    $('#altMarker').style.transform = `translate(${last[0]}px, ${last[1]}px)`;
+    $('#altMax').style.transform = `translate(0px, ${Y(hi)}px)`;
+
+    const r = pts[pts.length - 1];
+    tween($('#altNow'), r.altitude, 0);
+    $('#altMin').textContent = `${nf(lo)} m`;
+    $('#altMaxT').textContent = `${nf(hi)} m`;
+    const d = r.altitude - pts[0].altitude;
+    $('#altDelta').textContent = `${d > 0 ? '+' : ''}${nf(d)} m`;
 
     const measured = r.pressure != null;
-    const p = measured ? r.pressure : PHYS.pressureAt(alt);
+    const p = measured ? r.pressure : PHYS.pressureAt(r.altitude);
     $('#altO2').textContent = `Cada respiración aporta ≈ ${Math.round((p / PHYS.P0) * 100)} % del oxígeno que a nivel del mar`
       + (measured ? '' : ' (estimado por altura)');
   }
@@ -469,7 +482,7 @@
       const { ctx, chartArea } = chart;
       const x = a[0].element.x;
       ctx.save();
-      ctx.strokeStyle = 'rgba(154,167,182,.35)';
+      ctx.strokeStyle = 'rgba(163,177,198,.4)';
       ctx.setLineDash([3, 3]);
       ctx.beginPath();
       ctx.moveTo(x, chartArea.top);
@@ -484,22 +497,21 @@
     charts.clear();
     const list = state.fields.filter((f) => f.chart && f.numeric);
     $('#charts').innerHTML = list
-      .map((f, i) => `<figure class="panel chart" style="--i:${i}"><header><h3>${esc(f.label)}${f.unit ? `<span>${esc(f.unit)}</span>` : ''}</h3><span class="stat" data-stat="${esc(f.key)}"></span></header><div class="canvas"><canvas data-key="${esc(f.key)}"></canvas></div></figure>`)
+      .map((f, i) => `<figure class="panel chart" style="--i:${i};--c:${f.color}"><header><h3>${esc(f.label)}${f.unit ? `<span>${esc(f.unit)}</span>` : ''}</h3><span class="stat" data-stat="${esc(f.key)}"></span></header><div class="canvas"><canvas data-key="${esc(f.key)}"></canvas></div></figure>`)
       .join('');
     if (!window.Chart) return;
 
     Chart.defaults.font.family = "'IBM Plex Mono', monospace";
     Chart.defaults.font.size = 11;
     Chart.defaults.color = '#6b7889';
-    const color = getComputedStyle(document.documentElement).getPropertyValue('--data').trim() || '#38bdf8';
-
     for (const f of list) {
+      const color = f.color;
       const canvas = $(`canvas[data-key="${CSS.escape(f.key)}"]`);
       charts.set(f.key, new Chart(canvas, {
         type: 'line',
         data: {
           datasets: [{
-            data: [], borderColor: color, backgroundColor: 'rgba(56,189,248,.07)', fill: 'start', borderWidth: 1.5,
+            data: [], borderColor: color, backgroundColor: `${color}1f`, fill: 'start', borderWidth: 2,
             pointRadius: (ctx) => (ctx.dataset.data.length < 60 ? 2 : 0), pointBackgroundColor: color, pointHoverRadius: 4,
             pointHoverBackgroundColor: '#fff', pointHoverBorderColor: color, tension: 0.25, cubicInterpolationMode: 'monotone',
           }],
@@ -583,21 +595,21 @@
   }
 
   // ---------------------------------------------------------- mapa
-  let map, trackLine, liveMarker;
+  let map, trackLine, liveMarker, startMarker;
 
   function ensureMap() {
     if (map || !window.L) return;
-    const t = state.config.target;
-    map = L.map('map', { scrollWheelZoom: false }).setView([t.latitude, t.longitude], 11);
+    const first = state.track[0];
+    map = L.map('map', { scrollWheelZoom: false }).setView([first.latitude, first.longitude], 13);
     const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '© OpenStreetMap · © OpenTopoMap (CC-BY-SA)' });
     const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 18, attribution: 'Imágenes © Esri' });
     const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
     topo.addTo(map);
     L.control.layers({ Topográfico: topo, Satélite: sat, Calles: osm }, null, { position: 'topright' }).addTo(map);
     L.control.scale({ imperial: false }).addTo(map);
-    L.marker([t.latitude, t.longitude], { icon: L.divIcon({ className: '', html: '<div class="pin-target"></div>', iconSize: [10, 10] }), title: t.name })
+    startMarker = L.marker([first.latitude, first.longitude], { icon: L.divIcon({ className: '', html: '<div class="pin-start"></div>', iconSize: [10, 10] }), title: 'Primera posición' })
       .addTo(map)
-      .bindPopup(`<b>${esc(t.name)}</b><br>Cumbre · ${t.altitude} m`);
+      .bindPopup('<b>Primera posición registrada</b>');
     trackLine = L.polyline([], { color: '#ff5a1f', weight: 2.5 }).addTo(map);
     map.on('click', () => map.scrollWheelZoom.enable());
     map.on('mouseout', () => map.scrollWheelZoom.disable());
@@ -622,9 +634,10 @@
     const lat = nf(last.latitude, 5);
     const lon = nf(last.longitude, 5);
     liveMarker.bindPopup(`<b>Última posición</b><br>${lat}, ${lon}${last.altitude != null ? `<br>${nf(last.altitude)} m` : ''}`);
-    const t = state.config.target;
-    const km = map.distance(ll, [t.latitude, t.longitude]) / 1000;
-    $('#gpsInfo').textContent = `${lat}, ${lon} · a ${nf(km, km < 10 ? 1 : 0)} km de la cumbre en línea recta · ${state.track.length} puntos`;
+    startMarker.setLatLng(pts[0]);
+    let km = 0;
+    for (let i = 1; i < pts.length; i++) km += map.distance(pts[i - 1], pts[i]) / 1000;
+    $('#gpsInfo').textContent = `${lat}, ${lon} · recorrido ${nf(km, km < 10 ? 2 : 1)} km · ${state.track.length} puntos`;
     if (fit) map.flyToBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 14, duration: REDUCED ? 0 : 1.2 });
   }
 
@@ -800,7 +813,6 @@
 
   function bindUi() {
     buildPipeline();
-    buildAltGrid();
     renderStageDetail(false);
 
     $('#deviceSelect').addEventListener('change', (e) => {
@@ -850,7 +862,7 @@
     try {
       state.config = await api('config');
     } catch {
-      state.config = { target: { name: 'Volcán Domuyo', latitude: -36.6333, longitude: -70.4333, altitude: 4709 } };
+      state.config = {};
     }
     await loadDevices().catch(() => {});
     await loadAll();

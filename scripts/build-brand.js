@@ -105,7 +105,7 @@ function arcText(font, text, cx, cy, r, size, { tracking = 0, position = 'top' }
 }
 
 // ---------------------------------------------------------------- isotipo
-// Volcán Domuyo + órbita (ATLAS) + señal transmitiendo desde la cumbre.
+// Montaña + órbita (ATLAS) + señal transmitiendo desde la cima.
 // Sistema de coordenadas 512×512.
 const ORBIT = { cx: 256, cy: 290, rx: 214, ry: 64, rot: -16 };
 const PEAK = [256, 150];
@@ -250,7 +250,7 @@ function patch() {
   }
   const top = arcText(GROTESK, 'MISIÓN DOMUYO', c, c, 410, 74, { tracking: 0.12, position: 'top' });
   const bottom = arcText(GROTESK, 'TITAN ATLAS', c, c, 440, 74, { tracking: 0.12, position: 'bottom' });
-  const coords = textPath(MONO, '36°38′S · 70°26′W · 4709 m', c, 740, 26, { tracking: 0.12, anchor: 'middle' });
+  const coords = textPath(MONO, 'TELEMETRÍA · ESP32', c, 740, 26, { tracking: 0.12, anchor: 'middle' });
   const star = (x, y, r) => {
     const p = [];
     for (let i = 0; i < 10; i++) {
@@ -285,7 +285,7 @@ function ogImage() {
   const W = 1200, H = 630;
   const title = textPath(GROTESK, 'TITAN ATLAS', 470, 290, 92, { tracking: 0.05 });
   const sub = textPath(MONO, 'MISIÓN DOMUYO', 474, 345, 30, { tracking: 0.42 });
-  const tag = textPath(GROTESK, 'Telemetría en tiempo real desde el techo de la Patagonia', 474, 420, 28);
+  const tag = textPath(GROTESK, 'Centro de control de telemetría en tiempo real', 474, 420, 28);
   return svg(W, H, `
   <defs>
     <linearGradient id="g" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="${C.deep}"/><stop offset="1" stop-color="${C.night}"/></linearGradient>

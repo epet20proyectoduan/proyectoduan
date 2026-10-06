@@ -117,7 +117,6 @@ api.get('/config', (req, res) => {
     team: 'Titan ATLAS',
     db: db.kind,
     secured: Boolean(API_KEY),
-    target: { name: 'Volcán Domuyo', latitude: -36.6333, longitude: -70.4333, altitude: 4709 },
     fields: COLUMNS,
   });
 });

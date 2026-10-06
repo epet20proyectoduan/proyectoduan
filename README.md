@@ -1,6 +1,6 @@
 # Misión Domuyo · Titan ATLAS
 
-Plataforma de telemetría para la expedición al Volcán Domuyo (4709 m, Neuquén).
+Plataforma de telemetría del equipo Titan ATLAS para la competencia Misión Domuyo.
 Un ESP32 envía lecturas por HTTPS → servidor Node.js en Railway → PostgreSQL → centro de control web en tiempo real.
 
 ```

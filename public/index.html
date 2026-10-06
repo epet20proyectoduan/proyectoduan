@@ -4,12 +4,12 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Misión Domuyo · Titan ATLAS</title>
-  <meta name="description" content="Centro de control de la Misión Domuyo del equipo Titan ATLAS. Telemetría del Volcán Domuyo, Neuquén.">
+  <meta name="description" content="Centro de control del equipo Titan ATLAS para la competencia Misión Domuyo. Telemetría en tiempo real desde un ESP32.">
   <meta name="theme-color" content="#0B0F14">
 
   <meta property="og:type" content="website">
   <meta property="og:title" content="Misión Domuyo · Titan ATLAS">
-  <meta property="og:description" content="Telemetría de la Misión Domuyo — Volcán Domuyo, Neuquén.">
+  <meta property="og:description" content="Centro de control de telemetría del equipo Titan ATLAS — Misión Domuyo.">
   <meta property="og:image" content="/assets/brand/og-image.png">
   <meta name="twitter:card" content="summary_large_image">
 
@@ -22,7 +22,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
-  <link rel="stylesheet" href="/css/styles.css?v=6">
+  <link rel="stylesheet" href="/css/styles.css?v=7">
 </head>
 <body>
   <header class="topbar">
@@ -45,7 +45,7 @@
   <div class="missionbar">
     <div class="missionbar-id">
       <h1>Misión Domuyo</h1>
-      <span class="coords">Volcán Domuyo, Neuquén · 36°38′S 70°26′W · 4709 m</span>
+      <span class="coords">Equipo Titan ATLAS · Centro de control de telemetría</span>
     </div>
     <div class="controls" role="toolbar" aria-label="Filtros">
       <label class="field">
@@ -99,23 +99,26 @@
             <button class="info-btn" type="button" aria-expanded="false" aria-controls="altExplain" title="¿Qué muestra?">?</button>
           </div>
           <div class="explain" id="altExplain"><div><p>
-            El punto marca la altura actual de la estación sobre una silueta del volcán. La línea punteada celeste es la altura máxima alcanzada.
+            El gráfico dibuja el perfil de altitud con las últimas lecturas reales: la línea punteada marca la altura máxima y la base, la mínima del período.
             Al subir, la presión del aire baja: cada respiración aporta menos oxígeno y el agua hierve a menor temperatura.
           </p></div></div>
-          <svg class="alt-svg" viewBox="0 0 320 350" role="img" aria-label="Altura actual sobre la silueta del volcán">
-            <g id="altGrid"></g>
-            <path class="alt-mountain" d="M40 330 L95 252 L120 234 L150 172 L178 122 L196 72 L210 38 L226 66 L246 94 L262 142 L290 206 L320 262 L320 330 Z"/>
-            <path class="alt-snow" d="M210 38 L196 72 L203 66 L209 76 L216 64 L226 66 Z"/>
-            <line class="alt-summit" x1="40" x2="320" y1="38" y2="38"/>
-            <text class="alt-summit-t" x="316" y="32" text-anchor="end">Cumbre 4709 m</text>
-            <g id="altMax" class="alt-max"><line x1="40" x2="320" y1="0" y2="0"/></g>
-            <g id="altMarker" class="alt-marker"><circle r="11" class="halo"/><circle r="5"/></g>
+          <svg class="alt-svg" id="altSvg" viewBox="0 0 320 240" role="img" aria-label="Perfil de altitud de las últimas lecturas">
+            <defs>
+              <linearGradient id="altFill" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0" stop-color="#34D399" stop-opacity=".35"/>
+                <stop offset="1" stop-color="#34D399" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <g id="altGrid" class="grid"></g>
+            <path id="altArea" class="alt-area"/>
+            <path id="altLine" class="alt-line-path"/>
+            <g id="altMax" class="alt-max"><line x1="36" x2="312" y1="0" y2="0"/><text x="312" y="-5" text-anchor="end">máx</text></g>
+            <g id="altMarker" class="alt-marker"><circle r="10" class="halo"/><circle r="4.5"/></g>
           </svg>
           <div class="alt-readout">
             <div class="alt-now"><span id="altNow">—</span><small>m</small></div>
-            <div class="alt-bar"><span id="altBar"></span></div>
-            <p id="altLeft" class="alt-line">—</p>
-            <p id="altO2" class="alt-line muted"></p>
+            <div class="alt-stats"><span>mín <b id="altMin">—</b></span><span>máx <b id="altMaxT">—</b></span><span>Δ <b id="altDelta">—</b></span></div>
+                        <p id="altO2" class="alt-line muted"></p>
           </div>
         </aside>
         <div class="readings" id="readings"></div>
@@ -146,18 +149,18 @@
 
     <section id="mision" class="block mission reveal">
       <div>
-        <h2>Sobre la misión</h2>
+        <h2>Sobre el proyecto</h2>
         <p>
-          El Volcán Domuyo, en el norte de Neuquén, es la cumbre más alta de la Patagonia (4709 m).
-          El equipo Titan ATLAS desarrolló una estación de telemetría basada en ESP32 que registra variables
-          ambientales y de posición durante la expedición y las transmite a este centro de control.
+          Titan ATLAS es el equipo que participa en la competencia <strong>Misión Domuyo</strong> con una estación
+          de telemetría basada en ESP32. La estación mide variables ambientales y de posición y las transmite
+          por internet a este centro de control.
         </p>
         <p>
-          Los datos se almacenan en PostgreSQL y se publican en tiempo real. Desde esta página se pueden
-          consultar por dispositivo y período, y exportar en CSV para su análisis.
+          Los datos se guardan en PostgreSQL y se publican en tiempo real. Desde esta página se pueden
+          consultar por dispositivo y período, entender qué significa cada medición y exportarlos en CSV para su análisis.
         </p>
       </div>
-      <img class="patch" src="/assets/brand/parche-mision.svg" alt="Parche de la Misión Domuyo" width="260" height="260" loading="lazy">
+      <img class="patch" src="/assets/brand/parche-mision.svg" alt="Parche del equipo Titan ATLAS para Misión Domuyo" width="260" height="260" loading="lazy">
     </section>
   </main>
 
@@ -170,7 +173,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
-  <script src="/js/sensors.js?v=6"></script>
-  <script src="/js/app.js?v=6" defer></script>
+  <script src="/js/sensors.js?v=7"></script>
+  <script src="/js/app.js?v=7" defer></script>
 </body>
 </html>

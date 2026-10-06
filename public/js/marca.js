@@ -18,16 +18,16 @@
   ];
 
   const COLORS = [
-    { name: 'Noche', hex: '#050B16', use: 'Fondo principal' },
-    { name: 'Navy ATLAS', hex: '#0A1628', use: 'Superficies, texto sobre claro' },
-    { name: 'Profundo', hex: '#11233D', use: 'Tarjetas, degradados' },
-    { name: 'Volcán', hex: '#FF5A1F', use: 'Acento principal, señal' },
-    { name: 'Brasa', hex: '#FF8A3D', use: 'Acento secundario' },
-    { name: 'Glaciar', hex: '#38BDF8', use: 'Órbita, datos, enlaces' },
-    { name: 'Hielo', hex: '#7DD3FC', use: 'Detalles, coordenadas' },
-    { name: 'Nieve', hex: '#F8FAFC', use: 'Texto sobre oscuro, cumbre' },
-    { name: 'Roca', hex: '#4A6FA0', use: 'Ladera iluminada' },
-    { name: 'Sombra', hex: '#22395C', use: 'Ladera en sombra' },
+    { name: 'Navy ATLAS', hex: '#0A1120', use: 'Fondo principal' },
+    { name: 'Panel', hex: '#101A2E', use: 'Tarjetas y superficies' },
+    { name: 'Naranja ATLAS', hex: '#FF6B35', use: 'Acento de marca, señal' },
+    { name: 'Ámbar', hex: '#FF9F43', use: 'Acento secundario' },
+    { name: 'Celeste', hex: '#38BDF8', use: 'Órbita, enlaces, humedad' },
+    { name: 'Verde', hex: '#34D399', use: 'Altitud, estados correctos' },
+    { name: 'Violeta', hex: '#A78BFA', use: 'Presión, servidor' },
+    { name: 'Amarillo', hex: '#FACC15', use: 'Batería, ESP32' },
+    { name: 'Blanco', hex: '#F8FAFC', use: 'Texto sobre oscuro' },
+    { name: 'Azul acero', hex: '#4A6FA0', use: 'Isotipo, ladera iluminada' },
   ];
 
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
