@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kit de marca · Titan ATLAS</title>
+  <meta name="description" content="Logotipos, colores y tipografías del equipo Titan ATLAS y la Misión Domuyo.">
+  <meta name="theme-color" content="#0B0F14">
+  <meta property="og:image" content="/assets/brand/og-image.png">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/styles.css?v=3">
+  <style>
+    .intro { max-width: 720px; color: var(--text-2); margin: 8px 0 0; }
+    .page-title { font-size: 22px; }
+    .assets { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+    .asset { overflow: hidden; }
+    .asset .stage { aspect-ratio: 16 / 10; display: grid; place-items: center; padding: 24px; border-bottom: 1px solid var(--border); }
+    .asset .stage img { max-height: 100%; width: auto; max-width: 100%; }
+    .stage.dark { background: #0b0f14; }
+    .stage.light { background: #f3f5f8; }
+    .stage.check { background: repeating-conic-gradient(#e4e8ee 0 25%, #f6f8fa 0 50%) 50% / 16px 16px; }
+    .asset .meta { padding: 10px 12px; display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+    .asset .meta b { font-weight: 500; font-size: 13.5px; }
+    .asset .meta small { display: block; color: var(--muted); font-size: 12px; }
+    .dl { display: flex; gap: 6px; }
+    .dl a { font-family: var(--mono); font-size: 11.5px; padding: 3px 8px; border: 1px solid var(--border-strong); border-radius: 4px; color: var(--text-2); }
+    .dl a:hover { color: var(--text); border-color: var(--muted); text-decoration: none; }
+
+    .colors { width: 100%; border-collapse: collapse; }
+    .colors td, .colors th { padding: 9px 12px; border-bottom: 1px solid var(--border); text-align: left; font-size: 13px; }
+    .colors th { color: var(--muted); font-weight: 500; background: var(--panel-2); }
+    .colors td { color: var(--text-2); }
+    .colors td.mono { font-family: var(--mono); font-size: 12.5px; }
+    .sw { display: inline-block; width: 28px; height: 18px; border-radius: 3px; border: 1px solid var(--border-strong); vertical-align: middle; }
+    .colors tbody tr { cursor: pointer; }
+    .colors tbody tr:hover td { background: var(--panel-2); }
+
+    .two { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .two .panel { padding: 16px 18px; }
+    .two h3 { font-size: 13.5px; font-weight: 500; margin-bottom: 8px; }
+    .two p, .two li { color: var(--text-2); font-size: 13.5px; }
+    .two ul { margin: 0; padding-left: 18px; }
+    .two li + li { margin-top: 4px; }
+    .sample { font-size: 34px; color: var(--text); margin: 4px 0 8px; line-height: 1.1; }
+    @media (max-width: 760px) { .two { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Inicio"><img src="/assets/brand/logo-horizontal-oscuro.svg" alt="Titan ATLAS — Misión Domuyo" height="34"></a>
+    <nav class="nav" aria-label="Principal">
+      <a href="/">Centro de control</a>
+      <a href="#logos">Logotipos</a>
+      <a href="#colores">Colores</a>
+      <a href="#tipografia">Tipografía</a>
+      <a href="#uso">Uso</a>
+    </nav>
+  </header>
+
+  <main class="wrap">
+    <h1 class="page-title">Kit de marca</h1>
+    <p class="intro">
+      Isotipo: el Volcán Domuyo atravesado por una órbita, con una señal que se emite desde la cumbre.
+      Los textos de todos los archivos están convertidos a trazos, por lo que se ven igual en cualquier equipo e imprenta.
+    </p>
+
+    <section id="logos" class="block">
+      <div class="block-head"><h2>Logotipos</h2><span class="hint">SVG para impresión y web · PNG en alta resolución</span></div>
+      <div class="assets" id="assets"></div>
+    </section>
+
+    <section id="colores" class="block">
+      <div class="block-head"><h2>Colores</h2><span class="hint">Clic en una fila para copiar el HEX</span></div>
+      <div class="panel" style="overflow:auto">
+        <table class="colors">
+          <thead><tr><th></th><th>Nombre</th><th>HEX</th><th>RGB</th><th>Uso</th></tr></thead>
+          <tbody id="colors"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="tipografia" class="block">
+      <div class="block-head"><h2>Tipografía</h2><span class="hint">Google Fonts · licencia OFL</span></div>
+      <div class="two">
+        <div class="panel">
+          <h3>Logotipo</h3>
+          <div class="sample" style="font-family:'Space Grotesk';font-weight:700;letter-spacing:.06em">TITAN ATLAS</div>
+          <div class="sample" style="font-family:'JetBrains Mono';font-weight:500;font-size:16px;letter-spacing:.42em;color:#ff5a1f">MISIÓN DOMUYO</div>
+          <p>Space Grotesk Bold y JetBrains Mono Medium. Solo para el logotipo y piezas gráficas.</p>
+        </div>
+        <div class="panel">
+          <h3>Interfaz y documentos</h3>
+          <div class="sample">IBM Plex Sans</div>
+          <div class="sample" style="font-family:var(--mono);font-size:22px">IBM Plex Mono 0123456789</div>
+          <p>Plex Sans para texto, Plex Mono para valores, coordenadas y datos técnicos.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="uso" class="block">
+      <div class="block-head"><h2>Uso</h2></div>
+      <div class="two">
+        <div class="panel">
+          <h3>Recomendaciones</h3>
+          <ul>
+            <li>Versión oscura sobre fondos oscuros; versión clara sobre fondos blancos.</li>
+            <li>Versiones monocromas para grabado láser, vinilo de corte, sellos o impresión a una tinta.</li>
+            <li>Parche de misión para indumentaria, stickers y bordados.</li>
+            <li>Área libre alrededor del logo igual a la altura de “TITAN ATLAS”.</li>
+            <li>Tamaño mínimo: logo horizontal 30 mm / 120 px; isotipo 6 mm / 24 px.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Evitar</h3>
+          <ul>
+            <li>Deformar, rotar o cambiar proporciones.</li>
+            <li>Usar colores fuera de la paleta.</li>
+            <li>Colocar la versión a color sobre fotografías con mucho detalle (usar la blanca).</li>
+            <li>Agregar sombras, contornos o efectos.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>© <span id="year"></span> Titan ATLAS · Misión Domuyo</span>
+    <nav><a href="/">Centro de control</a></nav>
+  </footer>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="/js/marca.js?v=3" defer></script>
+</body>
+</html>

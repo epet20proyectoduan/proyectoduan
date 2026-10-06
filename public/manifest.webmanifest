@@ -1,0 +1,15 @@
+{
+  "name": "Misión Domuyo · Titan ATLAS",
+  "short_name": "Domuyo",
+  "description": "Centro de control de telemetría de la Misión Domuyo",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#050B16",
+  "theme_color": "#050B16",
+  "lang": "es",
+  "icons": [
+    { "src": "/assets/brand/app-icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/assets/brand/app-icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml" }
+  ]
+}

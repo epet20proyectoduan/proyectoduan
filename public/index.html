@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Misión Domuyo · Titan ATLAS</title>
+  <meta name="description" content="Centro de control de la Misión Domuyo del equipo Titan ATLAS. Telemetría del Volcán Domuyo, Neuquén.">
+  <meta name="theme-color" content="#0B0F14">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="Misión Domuyo · Titan ATLAS">
+  <meta property="og:description" content="Telemetría de la Misión Domuyo — Volcán Domuyo, Neuquén.">
+  <meta property="og:image" content="/assets/brand/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/assets/brand/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="apple-touch-icon" href="/assets/brand/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
+  <link rel="stylesheet" href="/css/styles.css?v=6">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Titan ATLAS — inicio">
+      <img src="/assets/brand/logo-horizontal-oscuro.svg" alt="Titan ATLAS — Misión Domuyo" height="34">
+    </a>
+    <nav class="nav" aria-label="Principal">
+      <a href="#recorrido">Cómo funciona</a>
+      <a href="#lecturas">Lecturas</a>
+      <a href="#evolucion">Evolución</a>
+      <a href="#mapa">Mapa</a>
+      <a href="#registros">Registros</a>
+      <a href="/marca">Marca</a>
+    </nav>
+    <div class="link" id="linkStatus" data-state="connecting">
+      <span class="dot" aria-hidden="true"></span><span class="label">Conectando</span>
+    </div>
+  </header>
+
+  <div class="missionbar">
+    <div class="missionbar-id">
+      <h1>Misión Domuyo</h1>
+      <span class="coords">Volcán Domuyo, Neuquén · 36°38′S 70°26′W · 4709 m</span>
+    </div>
+    <div class="controls" role="toolbar" aria-label="Filtros">
+      <label class="field">
+        <span>Dispositivo</span>
+        <select id="deviceSelect"><option value="">Todos</option></select>
+      </label>
+      <div class="segmented" id="rangeSelect" role="radiogroup" aria-label="Período">
+        <span class="seg-thumb" aria-hidden="true"></span>
+        <button role="radio" data-range="15m">15m</button>
+        <button role="radio" data-range="1h" aria-checked="true">1h</button>
+        <button role="radio" data-range="6h">6h</button>
+        <button role="radio" data-range="24h">24h</button>
+        <button role="radio" data-range="7d">7d</button>
+        <button role="radio" data-range="30d">30d</button>
+      </div>
+      <a class="btn" id="exportCsv" href="/api/export.csv?range=1h" download>Exportar CSV</a>
+    </div>
+  </div>
+
+  <main class="wrap">
+    <!-- Recorrido del dato: se anima con cada paquete real -->
+    <section id="recorrido" class="block reveal">
+      <div class="block-head">
+        <h2>Recorrido del dato</h2>
+        <span class="hint">Cada paquete que llega recorre estas etapas. Tocá una para ver qué hace.</span>
+      </div>
+      <ol class="pipeline" id="pipeline" role="tablist" aria-label="Etapas"></ol>
+      <div class="panel node-detail" id="nodeDetail" role="tabpanel" aria-live="polite"></div>
+    </section>
+
+    <!-- Estado vacío -->
+    <section class="panel waiting reveal" id="waiting" hidden>
+      <div class="waiting-icon" aria-hidden="true"><span></span><span></span><span></span></div>
+      <div>
+        <h2>Esperando el primer paquete</h2>
+        <p>El servidor está en línea. Cuando el ESP32 transmita, las lecturas van a aparecer acá automáticamente, sin recargar la página.</p>
+        <table class="spec">
+          <tr><th>Endpoint</th><td><code>POST <span id="endpointUrl">/api/telemetry</span></code></td></tr>
+          <tr><th>Autenticación</th><td><code>X-API-Key: &lt;API_KEY&gt;</code></td></tr>
+          <tr><th>Formato</th><td><code>application/json</code> — un objeto o un arreglo de hasta 200 lecturas</td></tr>
+        </table>
+      </div>
+    </section>
+
+    <section id="lecturas" class="block reveal" hidden>
+      <div class="block-head"><h2>Lecturas actuales</h2><span class="hint" id="readingTime"></span></div>
+      <div class="readings-layout" id="readingsLayout">
+        <aside class="panel altimeter" id="altimeter" hidden>
+          <div class="alt-head">
+            <span class="alt-title">Altímetro</span>
+            <button class="info-btn" type="button" aria-expanded="false" aria-controls="altExplain" title="¿Qué muestra?">?</button>
+          </div>
+          <div class="explain" id="altExplain"><div><p>
+            El punto marca la altura actual de la estación sobre una silueta del volcán. La línea punteada celeste es la altura máxima alcanzada.
+            Al subir, la presión del aire baja: cada respiración aporta menos oxígeno y el agua hierve a menor temperatura.
+          </p></div></div>
+          <svg class="alt-svg" viewBox="0 0 320 350" role="img" aria-label="Altura actual sobre la silueta del volcán">
+            <g id="altGrid"></g>
+            <path class="alt-mountain" d="M40 330 L95 252 L120 234 L150 172 L178 122 L196 72 L210 38 L226 66 L246 94 L262 142 L290 206 L320 262 L320 330 Z"/>
+            <path class="alt-snow" d="M210 38 L196 72 L203 66 L209 76 L216 64 L226 66 Z"/>
+            <line class="alt-summit" x1="40" x2="320" y1="38" y2="38"/>
+            <text class="alt-summit-t" x="316" y="32" text-anchor="end">Cumbre 4709 m</text>
+            <g id="altMax" class="alt-max"><line x1="40" x2="320" y1="0" y2="0"/></g>
+            <g id="altMarker" class="alt-marker"><circle r="11" class="halo"/><circle r="5"/></g>
+          </svg>
+          <div class="alt-readout">
+            <div class="alt-now"><span id="altNow">—</span><small>m</small></div>
+            <div class="alt-bar"><span id="altBar"></span></div>
+            <p id="altLeft" class="alt-line">—</p>
+            <p id="altO2" class="alt-line muted"></p>
+          </div>
+        </aside>
+        <div class="readings" id="readings"></div>
+      </div>
+    </section>
+
+    <section id="evolucion" class="block reveal" hidden>
+      <div class="block-head"><h2>Evolución</h2><span class="hint" id="rangeHint"></span></div>
+      <div class="charts" id="charts"></div>
+    </section>
+
+    <section id="mapa" class="block reveal" hidden>
+      <div class="block-head"><h2>Posición</h2><span class="hint" id="gpsInfo"></span></div>
+      <div class="panel map-panel"><div id="map" role="region" aria-label="Mapa"></div></div>
+    </section>
+
+    <section id="registros" class="block reveal" hidden>
+      <div class="block-head"><h2>Registros</h2><span class="hint">Últimos 100 · hora local</span></div>
+      <div class="panel table-panel">
+        <div class="table-scroll">
+          <table class="data">
+            <thead id="rowsHead"></thead>
+            <tbody id="rows"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <section id="mision" class="block mission reveal">
+      <div>
+        <h2>Sobre la misión</h2>
+        <p>
+          El Volcán Domuyo, en el norte de Neuquén, es la cumbre más alta de la Patagonia (4709 m).
+          El equipo Titan ATLAS desarrolló una estación de telemetría basada en ESP32 que registra variables
+          ambientales y de posición durante la expedición y las transmite a este centro de control.
+        </p>
+        <p>
+          Los datos se almacenan en PostgreSQL y se publican en tiempo real. Desde esta página se pueden
+          consultar por dispositivo y período, y exportar en CSV para su análisis.
+        </p>
+      </div>
+      <img class="patch" src="/assets/brand/parche-mision.svg" alt="Parche de la Misión Domuyo" width="260" height="260" loading="lazy">
+    </section>
+  </main>
+
+  <footer class="footer">
+    <span>© <span id="year"></span> Titan ATLAS · Misión Domuyo</span>
+    <nav><a href="/marca">Kit de marca</a><a href="/api/health">Estado del servidor</a></nav>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
+  <script src="/js/sensors.js?v=6"></script>
+  <script src="/js/app.js?v=6" defer></script>
+</body>
+</html>

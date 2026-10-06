@@ -1,0 +1,861 @@
+/* Misión Domuyo · Titan ATLAS — centro de control */
+(() => {
+  'use strict';
+
+  const $ = (s, el = document) => el.querySelector(s);
+  const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+  const REDUCED = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const RANGE_SECONDS = { '15m': 900, '1h': 3600, '6h': 21600, '24h': 86400, '7d': 604800, '30d': 2592000 };
+  const RANGE_LABEL = { '15m': 'últimos 15 minutos', '1h': 'última hora', '6h': 'últimas 6 horas', '24h': 'últimas 24 horas', '7d': 'últimos 7 días', '30d': 'últimos 30 días' };
+  const LIVE_APPEND = new Set(['15m', '1h', '6h']);
+  const ONLINE_MS = 60_000;
+  const CORE = new Set(['temperature', 'humidity', 'pressure', 'altitude', 'latitude', 'longitude', 'speed', 'battery', 'rssi']);
+  const CATALOG = new Map((window.SENSORS || []).map((s, i) => [s.key, { ...s, order: i }]));
+  const GROUP_ORDER = { ambiente: 0, posicion: 1, sistema: 2 };
+  const PHYS = window.PHYS;
+
+  const state = {
+    device: '',
+    range: '1h',
+    config: null,
+    lastAt: null,
+    lastRow: null,
+    packets: 0,
+    stats: {},
+    totals: {},
+    rows: [],
+    track: [],
+    fields: [],
+    bucket: null,
+    streamOk: false,
+    stage: 'esp',
+  };
+
+  // ---------------------------------------------------------- formato
+  const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const qs = (o) => new URLSearchParams(Object.entries(o).filter(([, v]) => v !== '' && v != null)).toString();
+  const nf = (v, d = 0) => Number(v).toLocaleString('es-AR', { minimumFractionDigits: d, maximumFractionDigits: d });
+  const time24 = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+  const timeFmt = new Intl.DateTimeFormat('es-AR', time24);
+  const hmFmt = new Intl.DateTimeFormat('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const dateTimeFmt = new Intl.DateTimeFormat('es-AR', { day: '2-digit', month: '2-digit', ...time24 });
+  const fmtStamp = (d) => (Date.now() - d.getTime() < 86_400_000 ? timeFmt : dateTimeFmt).format(d);
+
+  function fmt(v, f) {
+    if (v === null || v === undefined || v === '') return '—';
+    if (typeof v === 'number') return nf(v, f?.digits ?? (Number.isInteger(v) ? 0 : 2));
+    if (typeof v === 'object') return JSON.stringify(v);
+    return String(v);
+  }
+
+  function relTime(date) {
+    if (!date) return '—';
+    const s = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+    if (s < 60) return `hace ${s} s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `hace ${m} min`;
+    const h = Math.floor(m / 60);
+    if (h < 48) return `hace ${h} h`;
+    return dateTimeFmt.format(date);
+  }
+
+  const bucketText = (b) => (b < 60 ? `${b} s` : b < 3600 ? `${Math.round(b / 60)} min` : `${nf(b / 3600, 1)} h`);
+
+  async function api(path, params = {}) {
+    const q = qs(params);
+    const res = await fetch(`/api/${path}${q ? '?' + q : ''}`, { headers: { Accept: 'application/json' } });
+    if (!res.ok) throw new Error(`${path}: HTTP ${res.status}`);
+    return res.json();
+  }
+
+  function toast(msg) {
+    const t = $('#toast');
+    t.textContent = msg;
+    t.classList.add('show');
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => t.classList.remove('show'), 3500);
+  }
+
+  /** Anima un número desde su valor anterior hasta el nuevo. */
+  function tween(el, to, digits) {
+    if (typeof to !== 'number') {
+      el.textContent = fmt(to);
+      delete el.dataset.v;
+      return;
+    }
+    const from = parseFloat(el.dataset.v);
+    el.dataset.v = to;
+    cancelAnimationFrame(el._raf);
+    if (REDUCED || !Number.isFinite(from) || from === to) {
+      el.textContent = nf(to, digits);
+      return;
+    }
+    const t0 = performance.now();
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / 700);
+      const e = 1 - Math.pow(1 - k, 3);
+      el.textContent = nf(from + (to - from) * e, digits);
+      if (k < 1) el._raf = requestAnimationFrame(step);
+    };
+    el._raf = requestAnimationFrame(step);
+  }
+
+  // ---------------------------------------------------------- variables
+  function describe(key, source) {
+    const c = CATALOG.get(key);
+    return {
+      key,
+      source, // 'col' = columna propia · 'extra' = JSONB
+      label: c?.label || key,
+      unit: c?.unit || '',
+      digits: c?.digits,
+      info: c?.info || (source === 'extra' ? `Campo adicional "${key}" enviado por la estación. Se puede describir en sensors.js.` : ''),
+      insight: c?.insight,
+      card: c?.card !== false,
+      chart: c?.chart !== false,
+      group: c?.group || 'zz',
+      order: c ? c.order : 1000,
+      numeric: true,
+    };
+  }
+
+  const valueOf = (row, f) => (f.source === 'col' ? row?.[f.key] : row?.extra?.[f.key]);
+  const digitsOf = (f, v) => f.digits ?? (Number.isInteger(v) ? 0 : 2);
+
+  /** Detecta qué variables están llegando realmente. Devuelve true si cambió el conjunto. */
+  function discover(rows) {
+    const known = new Map(state.fields.map((f) => [f.key, f]));
+    let changed = false;
+    for (const r of rows) {
+      for (const k of CORE) {
+        if (r[k] != null && !known.has(k)) {
+          known.set(k, describe(k, 'col'));
+          changed = true;
+        }
+      }
+      for (const [k, v] of Object.entries(r.extra || {})) {
+        if (v === null || v === undefined) continue;
+        let f = known.get(k);
+        if (!f) {
+          f = describe(k, 'extra');
+          known.set(k, f);
+          changed = true;
+        }
+        if (typeof v !== 'number' && f.numeric) {
+          f.numeric = false;
+          f.chart = false;
+          changed = true;
+        }
+      }
+    }
+    state.fields = [...known.values()].sort(
+      (a, b) => (GROUP_ORDER[a.group] ?? 9) - (GROUP_ORDER[b.group] ?? 9) || a.order - b.order || a.key.localeCompare(b.key),
+    );
+    return changed;
+  }
+
+  const hasField = (k) => state.fields.some((f) => f.key === k);
+
+  // ---------------------------------------------------------- recorrido del dato
+  const ICONS = {
+    sensor: '<path d="M14 14.8V5a2 2 0 1 0-4 0v9.8a4 4 0 1 0 4 0Z"/><path d="M12 9v7"/>',
+    esp: '<rect x="7" y="7" width="10" height="10" rx="1"/><path d="M10 3v4M14 3v4M10 17v4M14 17v4M3 10h4M3 14h4M17 10h4M17 14h4"/>',
+    net: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>',
+    server: '<rect x="4" y="4" width="16" height="6" rx="1"/><rect x="4" y="14" width="16" height="6" rx="1"/><path d="M8 7h.01M8 17h.01"/>',
+    db: '<ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v12c0 1.7 3.1 3 7 3s7-1.3 7-3V6M5 12c0 1.7 3.1 3 7 3s7-1.3 7-3"/>',
+    panel: '<rect x="3" y="4" width="18" height="13" rx="1"/><path d="M8 21h8M12 17v4M7 13l3-3 3 2 4-5"/>',
+  };
+
+  const STAGES = [
+    {
+      id: 'sensor', title: 'Sensores',
+      sub: () => (state.fields.length ? `${state.fields.length} variables` : 'sin lecturas'),
+      text: () => 'Los sensores convierten un fenómeno físico —temperatura, presión, posición— en una señal eléctrica que el microcontrolador puede leer. '
+        + (state.fields.length ? `Hoy llegan: ${state.fields.map((f) => f.label.toLowerCase()).join(', ')}.` : 'Todavía no se recibió ninguna variable.'),
+    },
+    {
+      id: 'esp', title: 'ESP32',
+      sub: () => state.lastRow?.device_id || 'esperando',
+      text: () => 'Microcontrolador con WiFi. Lee los sensores cada pocos segundos y arma un mensaje en formato JSON. Si pierde la conexión guarda las lecturas en memoria y las envía juntas cuando vuelve la señal.',
+      code: () => state.lastRow && JSON.stringify(compactPacket(state.lastRow)),
+    },
+    {
+      id: 'net', title: 'Internet',
+      sub: () => (state.lastAt ? relTime(state.lastAt) : 'HTTPS'),
+      text: () => 'El mensaje viaja cifrado por HTTPS hasta el servidor. Lleva una clave (API key) en el encabezado para que solo las estaciones del equipo puedan escribir datos.',
+      code: () => `POST ${location.host}/api/telemetry\nX-API-Key: ••••••••`,
+    },
+    {
+      id: 'server', title: 'Servidor',
+      sub: () => 'Node.js · Railway',
+      text: () => 'Un programa en Node.js recibe cada mensaje, verifica la clave, interpreta los nombres de los campos y descarta valores físicamente imposibles (por ejemplo, una humedad de 140 %). Después lo guarda y lo reenvía a los navegadores conectados.',
+    },
+    {
+      id: 'db', title: 'Base de datos',
+      sub: () => `${nf(state.packets)} registros`,
+      text: () => `Cada lectura se guarda con la hora exacta de llegada en ${state.config?.db === 'postgresql' ? 'PostgreSQL' : 'memoria (modo desarrollo)'}. `
+        + 'Las variables conocidas tienen su propia columna; las nuevas se guardan en un campo flexible (JSONB), así se pueden agregar sensores sin modificar la base.',
+    },
+    {
+      id: 'panel', title: 'Este panel',
+      sub: () => (state.streamOk ? 'conectado en vivo' : 'reconectando'),
+      text: () => 'La página mantiene una conexión abierta con el servidor (Server-Sent Events). Cuando llega un paquete, se actualiza al instante sin recargar: lo vas a ver recorrer este diagrama.',
+    },
+  ];
+
+  function compactPacket(r) {
+    const o = { device_id: r.device_id };
+    for (const k of CORE) if (r[k] != null) o[k] = r[k];
+    Object.assign(o, r.extra || {});
+    return o;
+  }
+
+  function buildPipeline() {
+    $('#pipeline').innerHTML = STAGES.map((s, i) => `
+      <li class="node" role="tab" tabindex="0" data-stage="${s.id}" style="--i:${i}" aria-selected="${s.id === state.stage}">
+        <span class="ico"><svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[s.id]}</svg></span>
+        <span class="txt"><span class="t">${s.title}</span><span class="s" data-sub></span></span>
+        <span class="step">0${i + 1}</span>
+        ${i < STAGES.length - 1 ? '<span class="wire" aria-hidden="true"><i></i></span>' : ''}
+      </li>`).join('');
+
+    $('#pipeline').addEventListener('click', (e) => {
+      const n = e.target.closest('.node');
+      if (n) selectStage(n.dataset.stage);
+    });
+    $('#pipeline').addEventListener('keydown', (e) => {
+      const n = e.target.closest('.node');
+      if (!n) return;
+      const i = STAGES.findIndex((s) => s.id === n.dataset.stage);
+      let j = null;
+      if (e.key === 'ArrowRight') j = Math.min(STAGES.length - 1, i + 1);
+      if (e.key === 'ArrowLeft') j = Math.max(0, i - 1);
+      if (e.key === 'Enter' || e.key === ' ') j = i;
+      if (j === null) return;
+      e.preventDefault();
+      selectStage(STAGES[j].id);
+      $(`.node[data-stage="${STAGES[j].id}"]`).focus();
+    });
+  }
+
+  function selectStage(id) {
+    state.stage = id;
+    $$('.node').forEach((n) => n.setAttribute('aria-selected', String(n.dataset.stage === id)));
+    renderStageDetail(true);
+  }
+
+  function renderStageDetail(animate) {
+    const i = STAGES.findIndex((s) => s.id === state.stage);
+    const s = STAGES[i];
+    const code = s.code?.();
+    const el = $('#nodeDetail');
+    el.innerHTML = `<span class="n">0${i + 1}</span><h3>${s.title}</h3><div><p>${esc(s.text())}</p>${code ? `<pre class="packet"><code>${esc(code)}</code></pre>` : ''}</div>`;
+    if (animate) {
+      el.classList.remove('swap');
+      void el.offsetWidth;
+      el.classList.add('swap');
+    }
+  }
+
+  function renderPipeline() {
+    for (const s of STAGES) {
+      const n = $(`.node[data-stage="${s.id}"]`);
+      if (!n) continue;
+      $('[data-sub]', n).textContent = s.sub();
+      n.classList.toggle('waiting-node', s.id === 'esp' && !state.lastRow);
+    }
+  }
+
+  let flowTimer;
+  function pulsePipeline() {
+    if (REDUCED) return;
+    const p = $('#pipeline');
+    p.classList.remove('flow');
+    void p.offsetWidth;
+    p.classList.add('flow');
+    clearTimeout(flowTimer);
+    flowTimer = setTimeout(() => p.classList.remove('flow'), 2400);
+  }
+
+  // ---------------------------------------------------------- enlace
+  function setLink(name, label) {
+    const el = $('#linkStatus');
+    el.dataset.state = name;
+    $('.label', el).textContent = label;
+  }
+
+  function refreshLink() {
+    if (!state.streamOk) return setLink('error', 'Sin conexión con el servidor');
+    if (!state.lastAt) return setLink('idle', 'En línea · sin datos');
+    const live = Date.now() - state.lastAt.getTime() < ONLINE_MS;
+    setLink(live ? 'live' : 'idle', live ? `Recibiendo · ${relTime(state.lastAt)}` : `Último dato ${relTime(state.lastAt)}`);
+  }
+
+  // ---------------------------------------------------------- tarjetas
+  function buildReadings() {
+    $('#readings').innerHTML = state.fields
+      .filter((f) => f.card)
+      .map((f, i) => `
+        <article class="reading" data-key="${esc(f.key)}" style="--i:${i}">
+          <header>
+            <span class="name">${esc(f.label)}</span>
+            ${f.info ? `<button class="info-btn" type="button" aria-expanded="false" aria-controls="ex-${esc(f.key)}" title="¿Qué mide?">?</button>` : ''}
+          </header>
+          <div class="val"><span class="v">—</span>${f.unit ? `<small>${esc(f.unit)}</small>` : ''}<span class="trend"></span></div>
+          ${f.numeric ? '<svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/></svg>' : ''}
+          ${f.source === 'col' && f.numeric ? '<div class="range"></div>' : ''}
+          <p class="insight"></p>
+          ${f.info ? `<div class="explain" id="ex-${esc(f.key)}"><div><p>${esc(f.info)}</p></div></div>` : ''}
+        </article>`)
+      .join('');
+  }
+
+  function sparkSeries(f) {
+    const out = [];
+    for (const r of state.rows) {
+      const v = valueOf(r, f);
+      if (typeof v === 'number') out.push({ v, t: new Date(r.received_at) });
+      if (out.length >= 40) break;
+    }
+    return out.reverse();
+  }
+
+  function renderSpark(el, pts) {
+    const svg = $('.spark', el);
+    if (!svg) return;
+    if (pts.length < 2) {
+      $('.line', svg).setAttribute('d', '');
+      $('.area', svg).setAttribute('d', '');
+      return;
+    }
+    const vals = pts.map((p) => p.v);
+    const min = Math.min(...vals);
+    const max = Math.max(...vals);
+    const span = max - min || 1;
+    const xy = pts.map((p, i) => [(i / (pts.length - 1)) * 100, 27 - ((p.v - min) / span) * 24]);
+    const line = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(2)} ${y.toFixed(2)}`).join('');
+    $('.line', svg).setAttribute('d', line);
+    $('.area', svg).setAttribute('d', `${line}L100 30L0 30Z`);
+  }
+
+  function renderReadings({ bump = false } = {}) {
+    const row = state.lastRow;
+    const stale = !state.lastAt || Date.now() - state.lastAt.getTime() > ONLINE_MS;
+    for (const f of state.fields.filter((x) => x.card)) {
+      const el = $(`.reading[data-key="${CSS.escape(f.key)}"]`);
+      if (!el) continue;
+      const v = valueOf(row, f);
+      tween($('.v', el), v ?? null, digitsOf(f, v));
+      el.classList.toggle('stale', stale);
+
+      const pts = f.numeric ? sparkSeries(f) : [];
+      renderSpark(el, pts);
+
+      const trend = $('.trend', el);
+      if (pts.length >= 2) {
+        const d = pts[pts.length - 1].v - pts[0].v;
+        const dig = digitsOf(f, d);
+        const flat = Math.abs(d) < Math.pow(10, -dig) / 2;
+        trend.className = `trend ${flat ? '' : d > 0 ? 'up' : 'down'}`;
+        trend.textContent = flat ? '= estable' : `${d > 0 ? '▲' : '▼'} ${nf(Math.abs(d), dig)}`;
+        trend.title = `Cambio desde las ${hmFmt.format(pts[0].t)}`;
+      } else {
+        trend.textContent = '';
+      }
+
+      const range = $('.range', el);
+      if (range) {
+        const min = state.stats[`${f.key}_min`];
+        const max = state.stats[`${f.key}_max`];
+        range.textContent = min == null ? '' : `mín ${fmt(min, f)} · máx ${fmt(max, f)} · ${RANGE_LABEL[state.range]}`;
+      }
+
+      let text = '';
+      try {
+        text = (row && f.insight?.(Object.assign({}, row.extra, row))) || '';
+      } catch { /* insight inválido: se ignora */ }
+      $('.insight', el).textContent = text;
+
+      if (bump && v != null && !REDUCED) {
+        el.classList.remove('bump');
+        void el.offsetWidth;
+        el.classList.add('bump');
+      }
+    }
+    if (row) $('#readingTime').textContent = `${row.device_id} · ${dateTimeFmt.format(new Date(row.received_at))}`;
+    renderAltimeter();
+  }
+
+  function mergeStats(row) {
+    for (const f of state.fields) {
+      if (f.source !== 'col') continue;
+      const v = row[f.key];
+      if (v == null) continue;
+      for (const s of [state.stats, state.totals]) {
+        if (s[`${f.key}_min`] == null || v < s[`${f.key}_min`]) s[`${f.key}_min`] = v;
+        if (s[`${f.key}_max`] == null || v > s[`${f.key}_max`]) s[`${f.key}_max`] = v;
+      }
+    }
+  }
+
+  // ---------------------------------------------------------- altímetro
+  const RIDGE = [[40, 330], [95, 252], [120, 234], [150, 172], [178, 122], [196, 72], [210, 38]];
+  const altY = (a) => 330 - (Math.max(0, Math.min(5000, a)) * 292) / PHYS.SUMMIT;
+  function ridgeX(y) {
+    for (let i = 1; i < RIDGE.length; i++) {
+      const [x0, y0] = RIDGE[i - 1];
+      const [x1, y1] = RIDGE[i];
+      if (y <= y0 && y >= y1) return x0 + ((y0 - y) / (y0 - y1)) * (x1 - x0);
+    }
+    return y < 38 ? 210 : 40;
+  }
+
+  function buildAltGrid() {
+    let g = '<g class="grid">';
+    for (let a = 1000; a <= 4000; a += 1000) {
+      const y = altY(a);
+      g += `<line x1="40" x2="320" y1="${y}" y2="${y}"/><text x="34" y="${y + 3.5}" text-anchor="end">${a / 1000}k</text>`;
+    }
+    $('#altGrid').innerHTML = g + '</g>';
+  }
+
+  function lastAltitude() {
+    if (state.lastRow?.altitude != null) return state.lastRow;
+    return state.rows.find((r) => r.altitude != null) || null;
+  }
+
+  function renderAltimeter() {
+    const show = hasField('altitude');
+    $('#altimeter').hidden = !show;
+    $('#readingsLayout').classList.toggle('no-alt', !show);
+    if (!show) return;
+    const r = lastAltitude();
+    if (!r) return;
+    const alt = r.altitude;
+    const y = altY(alt);
+    $('#altMarker').style.transform = `translate(${ridgeX(y)}px, ${y}px)`;
+    const max = state.totals.altitude_max;
+    $('#altMax').style.transform = `translate(0px, ${altY(max ?? alt)}px)`;
+
+    tween($('#altNow'), alt, 0);
+    $('#altBar').style.width = `${Math.max(0, Math.min(100, (alt / PHYS.SUMMIT) * 100))}%`;
+    const left = PHYS.SUMMIT - alt;
+    $('#altLeft').textContent = (left <= 10 ? 'Cumbre alcanzada' : `Faltan ${nf(left)} m para la cumbre`)
+      + (max != null ? ` · máx. ${nf(max)} m` : '');
+
+    const measured = r.pressure != null;
+    const p = measured ? r.pressure : PHYS.pressureAt(alt);
+    $('#altO2').textContent = `Cada respiración aporta ≈ ${Math.round((p / PHYS.P0) * 100)} % del oxígeno que a nivel del mar`
+      + (measured ? '' : ' (estimado por altura)');
+  }
+
+  // ---------------------------------------------------------- gráficos
+  const charts = new Map();
+
+  function tickLabel(ms) {
+    const long = RANGE_SECONDS[state.range] > 86400;
+    return new Date(ms).toLocaleString('es-AR', long
+      ? { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }
+      : { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  // Línea vertical que sigue al cursor
+  const crosshair = {
+    id: 'crosshair',
+    afterDatasetsDraw(chart) {
+      const a = chart.tooltip?.getActiveElements?.();
+      if (!a?.length) return;
+      const { ctx, chartArea } = chart;
+      const x = a[0].element.x;
+      ctx.save();
+      ctx.strokeStyle = 'rgba(154,167,182,.35)';
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(x, chartArea.top);
+      ctx.lineTo(x, chartArea.bottom);
+      ctx.stroke();
+      ctx.restore();
+    },
+  };
+
+  function buildCharts() {
+    charts.forEach((c) => c.destroy());
+    charts.clear();
+    const list = state.fields.filter((f) => f.chart && f.numeric);
+    $('#charts').innerHTML = list
+      .map((f, i) => `<figure class="panel chart" style="--i:${i}"><header><h3>${esc(f.label)}${f.unit ? `<span>${esc(f.unit)}</span>` : ''}</h3><span class="stat" data-stat="${esc(f.key)}"></span></header><div class="canvas"><canvas data-key="${esc(f.key)}"></canvas></div></figure>`)
+      .join('');
+    if (!window.Chart) return;
+
+    Chart.defaults.font.family = "'IBM Plex Mono', monospace";
+    Chart.defaults.font.size = 11;
+    Chart.defaults.color = '#6b7889';
+    const color = getComputedStyle(document.documentElement).getPropertyValue('--data').trim() || '#38bdf8';
+
+    for (const f of list) {
+      const canvas = $(`canvas[data-key="${CSS.escape(f.key)}"]`);
+      charts.set(f.key, new Chart(canvas, {
+        type: 'line',
+        data: {
+          datasets: [{
+            data: [], borderColor: color, backgroundColor: 'rgba(56,189,248,.07)', fill: 'start', borderWidth: 1.5,
+            pointRadius: (ctx) => (ctx.dataset.data.length < 60 ? 2 : 0), pointBackgroundColor: color, pointHoverRadius: 4,
+            pointHoverBackgroundColor: '#fff', pointHoverBorderColor: color, tension: 0.25, cubicInterpolationMode: 'monotone',
+          }],
+        },
+        plugins: [crosshair],
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          animation: REDUCED ? false : { duration: 700, easing: 'easeOutCubic' },
+          parsing: false,
+          normalized: true,
+          interaction: { mode: 'nearest', axis: 'x', intersect: false },
+          plugins: {
+            legend: { display: false },
+            tooltip: {
+              backgroundColor: '#161c25', borderColor: '#2e3846', borderWidth: 1, titleColor: '#dce3ec', bodyColor: '#9aa7b6',
+              displayColors: false, cornerRadius: 4, padding: 8,
+              callbacks: {
+                title: (items) => dateTimeFmt.format(new Date(items[0].parsed.x)),
+                label: (item) => `${fmt(item.parsed.y, f)} ${f.unit}`,
+              },
+            },
+          },
+          scales: {
+            x: { type: 'linear', grid: { color: '#1a212b' }, ticks: { maxTicksLimit: 6, callback: tickLabel, maxRotation: 0 }, border: { color: '#222a35' } },
+            y: { grid: { color: '#1a212b' }, ticks: { maxTicksLimit: 5, callback: (v) => nf(v, Math.abs(v) < 10 ? 1 : 0) }, border: { display: false }, grace: '8%' },
+          },
+        },
+      }));
+    }
+  }
+
+  function setChartWindow() {
+    const to = Date.now();
+    const from = to - RANGE_SECONDS[state.range] * 1000;
+    charts.forEach((c) => {
+      c.options.scales.x.min = from;
+      c.options.scales.x.max = to;
+    });
+  }
+
+  function renderChartStats() {
+    for (const f of state.fields) {
+      const el = $(`[data-stat="${CSS.escape(f.key)}"]`);
+      const c = charts.get(f.key);
+      if (!el || !c) continue;
+      const ys = c.data.datasets[0].data.map((p) => p.y);
+      el.textContent = ys.length ? `prom. ${fmt(ys.reduce((a, b) => a + b, 0) / ys.length, f)}` : '';
+    }
+  }
+
+  function renderSeries(points, bucket) {
+    for (const f of state.fields) {
+      const c = charts.get(f.key);
+      if (!c) continue;
+      c.data.datasets[0].data = points
+        .map((p) => ({ x: new Date(p.t).getTime(), y: f.source === 'col' ? p[f.key] : p.extra?.[f.key] }))
+        .filter((p) => p.y != null);
+    }
+    setChartWindow();
+    charts.forEach((c) => c.update());
+    state.bucket = bucket;
+    $('#rangeHint').textContent = `${RANGE_LABEL[state.range]} · cada punto es el promedio de ${bucketText(bucket)}`;
+    renderChartStats();
+  }
+
+  function appendToCharts(row) {
+    const x = new Date(row.received_at).getTime();
+    const from = Date.now() - RANGE_SECONDS[state.range] * 1000;
+    for (const f of state.fields) {
+      const c = charts.get(f.key);
+      const y = valueOf(row, f);
+      if (!c || typeof y !== 'number') continue;
+      const data = c.data.datasets[0].data;
+      data.push({ x, y });
+      while (data.length && data[0].x < from) data.shift();
+    }
+    setChartWindow();
+    charts.forEach((c) => c.update('none'));
+    renderChartStats();
+  }
+
+  // ---------------------------------------------------------- mapa
+  let map, trackLine, liveMarker;
+
+  function ensureMap() {
+    if (map || !window.L) return;
+    const t = state.config.target;
+    map = L.map('map', { scrollWheelZoom: false }).setView([t.latitude, t.longitude], 11);
+    const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 17, attribution: '© OpenStreetMap · © OpenTopoMap (CC-BY-SA)' });
+    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 18, attribution: 'Imágenes © Esri' });
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+    topo.addTo(map);
+    L.control.layers({ Topográfico: topo, Satélite: sat, Calles: osm }, null, { position: 'topright' }).addTo(map);
+    L.control.scale({ imperial: false }).addTo(map);
+    L.marker([t.latitude, t.longitude], { icon: L.divIcon({ className: '', html: '<div class="pin-target"></div>', iconSize: [10, 10] }), title: t.name })
+      .addTo(map)
+      .bindPopup(`<b>${esc(t.name)}</b><br>Cumbre · ${t.altitude} m`);
+    trackLine = L.polyline([], { color: '#ff5a1f', weight: 2.5 }).addTo(map);
+    map.on('click', () => map.scrollWheelZoom.enable());
+    map.on('mouseout', () => map.scrollWheelZoom.disable());
+  }
+
+  function renderTrack(fit) {
+    const has = state.track.length > 0;
+    $('#mapa').hidden = !has;
+    if (!has) return;
+    ensureMap();
+    if (!map) return;
+    map.invalidateSize();
+    const pts = state.track.map((p) => [p.latitude, p.longitude]);
+    trackLine.setLatLngs(pts);
+    const last = state.track[state.track.length - 1];
+    const ll = [last.latitude, last.longitude];
+    if (!liveMarker) {
+      liveMarker = L.marker(ll, { icon: L.divIcon({ className: '', html: '<div class="pin-live"></div>', iconSize: [14, 14] }), zIndexOffset: 1000 }).addTo(map);
+    } else {
+      liveMarker.setLatLng(ll);
+    }
+    const lat = nf(last.latitude, 5);
+    const lon = nf(last.longitude, 5);
+    liveMarker.bindPopup(`<b>Última posición</b><br>${lat}, ${lon}${last.altitude != null ? `<br>${nf(last.altitude)} m` : ''}`);
+    const t = state.config.target;
+    const km = map.distance(ll, [t.latitude, t.longitude]) / 1000;
+    $('#gpsInfo').textContent = `${lat}, ${lon} · a ${nf(km, km < 10 ? 1 : 0)} km de la cumbre en línea recta · ${state.track.length} puntos`;
+    if (fit) map.flyToBounds(L.latLngBounds(pts), { padding: [40, 40], maxZoom: 14, duration: REDUCED ? 0 : 1.2 });
+  }
+
+  // ---------------------------------------------------------- tabla
+  function renderTableHead() {
+    $('#rowsHead').innerHTML = `<tr><th>Hora</th><th class="l">Dispositivo</th>${state.fields
+      .map((f) => `<th${f.numeric ? '' : ' class="l"'}>${esc(f.label)}${f.unit ? ` (${esc(f.unit)})` : ''}</th>`)
+      .join('')}</tr>`;
+  }
+
+  function rowHtml(r, isNew) {
+    return `<tr${isNew ? ' class="new enter"' : ''}><td class="l">${esc(fmtStamp(new Date(r.received_at)))}</td><td class="l">${esc(r.device_id)}</td>${state.fields
+      .map((f) => {
+        const v = valueOf(r, f);
+        return `<td class="${f.numeric ? '' : 'l'}${v == null ? ' n' : ''}">${esc(fmt(v, f))}</td>`;
+      })
+      .join('')}</tr>`;
+  }
+
+  function renderTable() {
+    renderTableHead();
+    $('#rows').innerHTML = state.rows.map((r) => rowHtml(r)).join('');
+  }
+
+  // ---------------------------------------------------------- visibilidad
+  function renderVisibility() {
+    const hasData = state.rows.length > 0;
+    $('#waiting').hidden = state.packets > 0;
+    $('#lecturas').hidden = !hasData;
+    $('#evolucion').hidden = !hasData || charts.size === 0;
+    $('#registros').hidden = !hasData;
+  }
+
+  // ---------------------------------------------------------- dispositivos
+  async function loadDevices() {
+    const list = await api('devices');
+    const sel = $('#deviceSelect');
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Todos</option>' + list.map((d) => `<option value="${esc(d.id)}">${esc(d.name || d.id)}${d.online ? '' : ' (sin señal)'}</option>`).join('');
+    sel.value = list.some((d) => d.id === current) ? current : '';
+  }
+
+  // ---------------------------------------------------------- carga
+  let loadSeq = 0;
+  async function loadAll({ fit = true } = {}) {
+    const seq = ++loadSeq;
+    const p = { device: state.device };
+    $('#exportCsv').href = `/api/export.csv?${qs({ ...p, range: state.range })}`;
+    try {
+      const [series, stats, rows, track, totals] = await Promise.all([
+        api('series', { ...p, range: state.range }),
+        api('stats', { ...p, range: state.range }),
+        api('telemetry', { ...p, limit: 100 }),
+        api('track', { ...p, limit: 2000 }),
+        api('stats', p),
+      ]);
+      if (seq !== loadSeq) return;
+      state.stats = stats;
+      state.totals = totals;
+      state.rows = rows;
+      state.track = track;
+      state.packets = totals.count;
+      state.lastRow = rows[0] || null;
+      state.lastAt = state.lastRow ? new Date(state.lastRow.received_at) : null;
+      state.fields = [];
+      discover(rows);
+      // Las secciones se muestran antes de crear los gráficos para que tengan tamaño
+      $('#lecturas').hidden = !rows.length;
+      $('#evolucion').hidden = !rows.length;
+      buildReadings();
+      buildCharts();
+      renderVisibility();
+      renderReadings();
+      renderSeries(series.points, series.bucket);
+      renderTable();
+      renderTrack(fit);
+      renderPipeline();
+      renderStageDetail(false);
+      refreshLink();
+    } catch (err) {
+      console.error(err);
+      toast('No se pudieron cargar los datos.');
+    }
+  }
+
+  // ---------------------------------------------------------- tiempo real
+  let refreshTimer;
+  function connectStream() {
+    if (!window.EventSource) return;
+    const es = new EventSource('/api/stream');
+    es.onopen = () => {
+      state.streamOk = true;
+      refreshLink();
+      renderPipeline();
+    };
+    es.onerror = () => {
+      state.streamOk = false;
+      refreshLink();
+      renderPipeline();
+    };
+    es.addEventListener('telemetry', (ev) => {
+      const row = JSON.parse(ev.data);
+      state.packets += 1;
+      pulsePipeline();
+      if (![...$('#deviceSelect').options].some((o) => o.value === row.device_id)) loadDevices().catch(() => {});
+      if (state.device && row.device_id !== state.device) return renderPipeline();
+
+      // Una variable nueva obliga a rearmar tarjetas y gráficos
+      if (discover([row])) return loadAll({ fit: state.track.length === 0 });
+
+      state.lastRow = row;
+      state.lastAt = new Date(row.received_at);
+      state.rows.unshift(row);
+      state.rows.length = Math.min(state.rows.length, 100);
+      mergeStats(row);
+      renderReadings({ bump: true });
+
+      if (LIVE_APPEND.has(state.range)) {
+        appendToCharts(row);
+      } else {
+        clearTimeout(refreshTimer);
+        refreshTimer = setTimeout(() => loadAll({ fit: false }), 30_000);
+      }
+
+      const tbody = $('#rows');
+      tbody.insertAdjacentHTML('afterbegin', rowHtml(row, true));
+      while (tbody.rows.length > 100) tbody.deleteRow(-1);
+      const added = tbody.rows[0];
+      setTimeout(() => added.classList.remove('new', 'enter'), 1600);
+
+      if (row.latitude != null && row.longitude != null) {
+        state.track.push(row);
+        renderTrack(state.track.length === 1);
+      }
+      renderVisibility();
+      renderPipeline();
+      if (['esp', 'db', 'net', 'sensor'].includes(state.stage)) renderStageDetail(false);
+      refreshLink();
+    });
+  }
+
+  // ---------------------------------------------------------- UI
+  function moveThumb() {
+    const b = $('#rangeSelect button[aria-checked="true"]');
+    const thumb = $('.seg-thumb');
+    if (!b || !thumb) return;
+    thumb.style.width = `${b.offsetWidth}px`;
+    thumb.style.transform = `translateX(${b.offsetLeft}px)`;
+  }
+
+  function observeSections() {
+    if (!('IntersectionObserver' in window)) {
+      $$('.reveal').forEach((el) => el.classList.add('in'));
+      return;
+    }
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) {
+        e.target.classList.add('in');
+        io.unobserve(e.target);
+      }
+    }, { rootMargin: '0px 0px -40px 0px' });
+    $$('.reveal').forEach((el) => io.observe(el));
+
+    const links = new Map($$('.nav a[href^="#"]').map((a) => [a.getAttribute('href').slice(1), a]));
+    const spy = new IntersectionObserver((entries) => {
+      for (const e of entries) if (e.isIntersecting) {
+        links.forEach((a) => a.classList.remove('active'));
+        links.get(e.target.id)?.classList.add('active');
+      }
+    }, { rootMargin: '-45% 0px -50% 0px' });
+    links.forEach((_, id) => { const s = document.getElementById(id); if (s) spy.observe(s); });
+  }
+
+  function bindUi() {
+    buildPipeline();
+    buildAltGrid();
+    renderStageDetail(false);
+
+    $('#deviceSelect').addEventListener('change', (e) => {
+      state.device = e.target.value;
+      loadAll();
+    });
+    $$('#rangeSelect button').forEach((b) =>
+      b.addEventListener('click', () => {
+        $$('#rangeSelect button').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
+        moveThumb();
+        state.range = b.dataset.range;
+        loadAll({ fit: false });
+      }),
+    );
+    addEventListener('resize', moveThumb);
+    document.fonts?.ready.then(moveThumb);
+    moveThumb();
+
+    // Botones "?" de las tarjetas y el altímetro
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('.info-btn');
+      if (!btn) return;
+      const panel = document.getElementById(btn.getAttribute('aria-controls'));
+      const open = btn.getAttribute('aria-expanded') !== 'true';
+      btn.setAttribute('aria-expanded', String(open));
+      panel?.classList.toggle('open', open);
+    });
+
+    $('#year').textContent = new Date().getFullYear();
+    $('#endpointUrl').textContent = `${location.origin}/api/telemetry`;
+    observeSections();
+
+    setInterval(() => {
+      refreshLink();
+      renderPipeline();
+      if (LIVE_APPEND.has(state.range) && charts.size) {
+        setChartWindow();
+        charts.forEach((c) => c.update('none'));
+      }
+    }, 1000);
+    setInterval(() => renderReadings(), 15_000);
+    setInterval(() => loadDevices().catch(() => {}), 30_000);
+  }
+
+  async function boot() {
+    bindUi();
+    try {
+      state.config = await api('config');
+    } catch {
+      state.config = { target: { name: 'Volcán Domuyo', latitude: -36.6333, longitude: -70.4333, altitude: 4709 } };
+    }
+    await loadDevices().catch(() => {});
+    await loadAll();
+    connectStream();
+  }
+
+  boot();
+})();

@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="Titan ATLAS"><title>Titan ATLAS</title>
+  <defs><radialGradient id="bg" cx=".5" cy=".3" r=".8"><stop offset="0" stop-color="#11233D"/><stop offset="1" stop-color="#050B16"/></radialGradient></defs>
+  <rect width="512" height="512" rx="112.64" fill="url(#bg)"/>
+  <g transform="translate(40.96 40.96) scale(0.9) translate(-18 -8)">
+  <defs>
+    <linearGradient id="dL" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4A6FA0"/><stop offset="1" stop-color="#2C4A72"/></linearGradient>
+    <linearGradient id="dR" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#22395C"/><stop offset="1" stop-color="#142640"/></linearGradient>
+    <linearGradient id="dO" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#7DD3FC"/><stop offset="1" stop-color="#0EA5E9"/></linearGradient>
+    <linearGradient id="dS" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#FF8A3D"/><stop offset="1" stop-color="#FF5A1F"/></linearGradient>
+    <mask id="dK" maskUnits="userSpaceOnUse" x="0" y="0" width="512" height="512">
+      <rect width="512" height="512" fill="#fff"/>
+      <g transform="rotate(-16 256 290)"><path d="M42 290 A214 64 0 0 0 470 290" fill="none" stroke="#000" stroke-width="34"/></g>
+    </mask>
+  </defs>
+  <g transform="rotate(-16 256 290)"><ellipse cx="256" cy="290" rx="214" ry="64" fill="none" stroke="url(#dO)" stroke-width="14" opacity=".45"/></g>
+  <g mask="url(#dK)">
+    <path d="M256 150 L206 222 L184 236 L98 382 L298 382 Z" fill="url(#dL)"/>
+    <path d="M256 150 L298 382 L420 382 Z" fill="url(#dR)"/>
+    <path d="M256 150 L215 209 L231 203 L243 217 L256 205 L267 213 Z" fill="#F8FAFC"/>
+    <path d="M256 150 L267 213 L279 204 L289 211 L295 205 Z" fill="#B8C7DA"/>
+  </g>
+  <g transform="rotate(-16 256 290)">
+    <path d="M42 290 A214 64 0 0 0 470 290" fill="none" stroke="url(#dO)" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="419.93" cy="331.14" r="28" fill="#38BDF8" opacity=".18"/>
+    <circle cx="419.93" cy="331.14" r="13" fill="#F8FAFC" stroke="#38BDF8" stroke-width="6"/></g>
+  <g fill="none" stroke="url(#dS)" stroke-width="12" stroke-linecap="round">
+    <path d="M227.72 121.72 A40 40 0 0 1 284.28 121.72"/><path d="M207.92 101.92 A68 68 0 0 1 304.08 101.92" opacity=".7"/>
+  </g>
+  <circle cx="256" cy="150" r="8" fill="#FF5A1F"/></g></svg>
