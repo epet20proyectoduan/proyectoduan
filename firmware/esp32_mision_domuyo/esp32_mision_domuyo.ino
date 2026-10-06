@@ -342,6 +342,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n== Titan ATLAS · Misión Domuyo ==");
+  Serial.println("Firmware v2.0 · 2 lecturas por segundo");
   setenv("TZ", "UTC0", 1);
   tzset();
 
