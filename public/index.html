@@ -22,7 +22,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
-  <link rel="stylesheet" href="/css/styles.css?v=13">
+  <link rel="stylesheet" href="/css/styles.css?v=14">
 </head>
 <body>
   <header class="topbar">
@@ -38,7 +38,7 @@
         <span>Dispositivo</span>
         <select id="deviceSelect"><option value="">Todos</option></select>
       </label>
-      <div class="segmented" id="rangeSelect" role="radiogroup" aria-label="Período">
+      <div class="segmented" id="rangeSelect" role="radiogroup" aria-label="Período de los gráficos">
         <span class="seg-thumb" aria-hidden="true"></span>
         <button role="radio" data-range="15m">15m</button>
         <button role="radio" data-range="1h" aria-checked="true">1h</button>
@@ -47,7 +47,7 @@
         <button role="radio" data-range="7d">7d</button>
         <button role="radio" data-range="30d">30d</button>
       </div>
-      <a class="btn" id="exportCsv" href="/api/export.csv?range=1h" download>Exportar CSV</a>
+      <a class="btn btn-primary" id="exportCsv" href="/api/export.csv?range=1h" download>Exportar CSV</a>
     </div>
     <div class="link" id="linkStatus" data-state="connecting">
       <span class="dot" aria-hidden="true"></span><span class="label">Conectando</span>
@@ -69,74 +69,88 @@
       </div>
     </section>
 
-    <!-- Tablero: todo en una sola vista -->
     <div id="dashboard" hidden>
-      <div class="dash-head">
-        <h2>Lecturas actuales</h2>
-        <span class="hint" id="readingTime"></span>
-      </div>
-      <section class="readings" id="readings" aria-label="Lecturas actuales"></section>
+      <!-- 1 · Indicadores -->
+      <section class="section" aria-labelledby="hKpi">
+        <div class="sec-head">
+          <h2 id="hKpi">Lecturas en vivo</h2>
+          <span class="hint" id="readingTime"></span>
+        </div>
+        <div class="kpis" id="readings"></div>
+      </section>
 
-      <div class="dash-grid" id="dashGrid">
-        <section class="dash-main" aria-label="Evolución">
-          <div class="dash-head">
-            <h2>Evolución</h2>
-            <span class="hint" id="rangeHint"></span>
-          </div>
-          <div class="charts" id="charts"></div>
-        </section>
-
-        <aside class="dash-side" id="dashSide">
-          <section class="panel altimeter" id="altimeter" hidden>
-            <div class="alt-head">
-              <span class="alt-title">Altímetro</span>
-              <button class="info-btn" type="button" aria-expanded="false" aria-controls="altExplain" title="¿Qué muestra?">?</button>
-            </div>
-            <div class="explain" id="altExplain"><div><p>
-              El gráfico dibuja el perfil de altitud con las últimas lecturas reales: la línea punteada marca la altura máxima.
-              Al subir, la presión del aire baja: cada respiración aporta menos oxígeno y el agua hierve a menor temperatura.
-            </p></div></div>
-            <svg class="alt-svg" id="altSvg" viewBox="0 0 320 240" role="img" aria-label="Perfil de altitud de las últimas lecturas">
-              <defs>
-                <linearGradient id="altFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0" stop-color="#34D399" stop-opacity=".35"/>
-                  <stop offset="1" stop-color="#34D399" stop-opacity="0"/>
-                </linearGradient>
-              </defs>
-              <g id="altGrid" class="grid"></g>
-              <path id="altArea" class="alt-area"/>
-              <path id="altLine" class="alt-line-path"/>
-              <g id="altMax" class="alt-max"><line x1="36" x2="312" y1="0" y2="0"/><text x="312" y="-5" text-anchor="end">máx</text></g>
-              <g id="altMarker" class="alt-marker"><circle r="10" class="halo"/><circle r="4.5"/></g>
-            </svg>
-            <div class="alt-readout">
-              <div class="alt-now"><span id="altNow">—</span><small>m</small></div>
-              <div class="alt-stats"><span>mín <b id="altMin">—</b></span><span>máx <b id="altMaxT">—</b></span><span>Δ <b id="altDelta">—</b></span></div>
-              <p id="altO2" class="alt-line muted"></p>
-            </div>
-          </section>
-
-        </aside>
-      </div>
-
-      <section class="gps-section" id="mapa" hidden>
-        <div class="dash-head"><h2>Ubicación GPS</h2><span class="hint" id="gpsInfo"></span></div>
-        <div class="panel gps-panel">
-          <div id="map" role="region" aria-label="Mapa con la ubicación del ESP32"></div>
-          <div class="gps-hud" id="gpsHud" aria-live="polite"></div>
-          <button class="gps-center" id="gpsCenter" type="button" hidden>◎ Centrar en el ESP32</button>
-          <div class="gps-wait" id="gpsWait" hidden>
-            <div class="gps-wait-card">
-              <span class="radar" aria-hidden="true"></span>
-              <b id="gpsWaitTitle">Buscando satélites…</b>
-              <p id="gpsWaitText"></p>
+      <!-- 2 · Mapa GPS + estado -->
+      <section class="section" aria-labelledby="hGps">
+        <div class="sec-head">
+          <h2 id="hGps">Ubicación GPS</h2>
+          <span class="hint" id="gpsInfo"></span>
+        </div>
+        <div class="map-row">
+          <div class="panel gps-panel" id="mapa">
+            <div id="map" role="region" aria-label="Mapa con la ubicación del ESP32"></div>
+            <div class="gps-hud" id="gpsHud" aria-live="polite"></div>
+            <button class="gps-center" id="gpsCenter" type="button" hidden>◎ Centrar en el ESP32</button>
+            <div class="gps-wait" id="gpsWait" hidden>
+              <div class="gps-wait-card">
+                <span class="radar" aria-hidden="true"></span>
+                <b id="gpsWaitTitle">Buscando satélites…</b>
+                <p id="gpsWaitText"></p>
+              </div>
             </div>
           </div>
+
+          <aside class="side">
+            <section class="panel stat-panel" aria-labelledby="hGpsState">
+              <div class="panel-title">
+                <h3 id="hGpsState">Estado del GPS</h3>
+                <button class="info-btn" type="button" data-info="El GPS calcula la posición con la señal de varios satélites. Necesita cielo abierto y al menos 4 satélites. La precisión indica el radio de error aproximado: cuanto más chico, mejor.">i</button>
+              </div>
+              <dl class="stat-list" id="gpsStats"></dl>
+            </section>
+
+            <section class="panel altimeter" id="altimeter" hidden aria-labelledby="hAlt">
+              <div class="panel-title">
+                <h3 id="hAlt">Perfil de altitud</h3>
+                <button class="info-btn" type="button" data-info="Dibuja la altura de las últimas lecturas del barómetro. La línea punteada marca la máxima alcanzada. Al subir, la presión baja: cada respiración aporta menos oxígeno.">i</button>
+              </div>
+              <div class="alt-body">
+                <div class="alt-now"><span id="altNow">—</span><small>m</small></div>
+                <div class="alt-stats"><span>mín <b id="altMin">—</b></span><span>máx <b id="altMaxT">—</b></span><span>Δ <b id="altDelta">—</b></span></div>
+              </div>
+              <svg class="alt-svg" id="altSvg" viewBox="0 0 320 120" preserveAspectRatio="none" role="img" aria-label="Perfil de altitud de las últimas lecturas">
+                <defs>
+                  <linearGradient id="altFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#34D399" stop-opacity=".35"/>
+                    <stop offset="1" stop-color="#34D399" stop-opacity="0"/>
+                  </linearGradient>
+                </defs>
+                <g id="altGrid" class="grid"></g>
+                <path id="altArea" class="alt-area"/>
+                <path id="altLine" class="alt-line-path"/>
+                <g id="altMax" class="alt-max"><line x1="0" x2="320" y1="0" y2="0"/></g>
+                <g id="altMarker" class="alt-marker"><circle r="4"/></g>
+              </svg>
+              <p id="altO2" class="alt-foot"></p>
+            </section>
+          </aside>
         </div>
       </section>
 
-      <section class="registros" id="registros">
-        <div class="dash-head"><h2>Registros</h2><span class="hint">Últimos 100 · hora local</span></div>
+      <!-- 3 · Gráficos -->
+      <section class="section dash-main" aria-labelledby="hCharts">
+        <div class="sec-head">
+          <h2 id="hCharts">Evolución</h2>
+          <span class="hint" id="rangeHint"></span>
+        </div>
+        <div class="charts" id="charts"></div>
+      </section>
+
+      <!-- 4 · Registros -->
+      <section class="section" id="registros" aria-labelledby="hRows">
+        <div class="sec-head">
+          <h2 id="hRows">Registros</h2>
+          <span class="hint">Últimos 100 · hora local</span>
+        </div>
         <div class="panel table-panel">
           <div class="table-scroll">
             <table class="data">
@@ -154,11 +168,12 @@
     <nav><a href="/marca">Kit de marca</a><a href="/api/health">Estado del servidor</a></nav>
   </footer>
 
+  <div class="popover" id="popover" role="tooltip" hidden></div>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
-  <script src="/js/sensors.js?v=13"></script>
-  <script src="/js/app.js?v=13" defer></script>
+  <script src="/js/sensors.js?v=14"></script>
+  <script src="/js/app.js?v=14" defer></script>
 </body>
 </html>

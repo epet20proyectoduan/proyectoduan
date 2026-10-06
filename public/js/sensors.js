@@ -72,12 +72,12 @@ window.PHYS = (() => {
       insight: (r) => (r.alt_rel == null ? null : r.alt_rel >= 0 ? `${nf(r.alt_rel, 1)} m por encima del punto de inicio` : `${nf(-r.alt_rel, 1)} m por debajo del punto de inicio`),
     },
     {
-      key: 'speed', label: 'Velocidad', unit: 'km/h', digits: 1, minSpan: 5, group: 'posicion', color: '#F472B6',
+      key: 'speed', label: 'Velocidad', unit: 'km/h', digits: 1, minSpan: 5, card: false, group: 'posicion', color: '#F472B6',
       info: 'Velocidad calculada por el GPS a partir de posiciones sucesivas. Con la estación quieta puede marcar 1 o 2 km/h por el error propio del GPS.',
       insight: (r) => (r.speed == null ? null : `${nf(r.speed / 3.6, 2)} m/s`),
     },
     {
-      key: 'gps_altitude', label: 'Altitud GPS', unit: 'm', digits: 0, minSpan: 20, group: 'posicion', color: '#5EEAD4',
+      key: 'gps_altitude', label: 'Altitud GPS', unit: 'm', digits: 0, minSpan: 20, card: false, chart: false, group: 'posicion', color: '#5EEAD4',
       info: 'Altura sobre el nivel del mar según el GPS. Suele tener un error de 10 a 20 m; se usa para contrastar con la del barómetro.',
       insight: (r) => (r.gps_altitude == null || r.altitude == null ? null : `Diferencia con el barómetro: ${nf(r.gps_altitude - r.altitude, 0)} m`),
     },
@@ -121,13 +121,13 @@ window.PHYS = (() => {
         : r.rssi >= -60 ? 'Señal excelente' : r.rssi >= -70 ? 'Señal buena' : r.rssi >= -80 ? 'Señal regular' : 'Señal débil'),
     },
     {
-      key: 'satellites', label: 'Satélites GPS', unit: '', digits: 0, group: 'sistema', color: '#93C5FD', chart: false,
+      key: 'satellites', label: 'Satélites GPS', unit: '', digits: 0, card: false, group: 'sistema', color: '#93C5FD', chart: false,
       info: 'Cantidad de satélites que usa el GPS. Con 4 o más calcula posición y altura; con 6 o más la posición es confiable. Necesita cielo abierto.',
       insight: (r) => (r.satellites == null ? null
         : r.satellites >= 6 ? 'Posición confiable' : r.satellites >= 4 ? 'Posición aceptable' : 'Sin posición: buscando satélites'),
     },
     {
-      key: 'hdop', label: 'Precisión GPS (HDOP)', unit: '', digits: 1, group: 'sistema', color: '#C4B5FD', chart: false,
+      key: 'hdop', label: 'Precisión GPS (HDOP)', unit: '', digits: 1, card: false, group: 'sistema', color: '#C4B5FD', chart: false,
       info: 'Indica qué tan buena es la geometría de los satélites. Cuanto más bajo, mejor: menos de 1 es ideal, de 1 a 2 excelente, de 2 a 5 buena y más de 5 pobre.',
       insight: (r) => (r.hdop == null ? null
         : r.hdop < 1 ? 'Precisión ideal' : r.hdop <= 2 ? 'Precisión excelente' : r.hdop <= 5 ? 'Precisión buena' : 'Precisión pobre'),

@@ -175,20 +175,21 @@
   }
 
   // ---------------------------------------------------------- tarjetas
+  // Todas las tarjetas tienen la misma estructura y altura: nombre, valor,
+  // tendencia + rango, interpretación (1 línea) y minigráfico al pie.
   function buildReadings() {
     $('#readings').innerHTML = state.fields
       .filter((f) => f.card)
-      .map((f, i) => `
-        <article class="reading" data-key="${esc(f.key)}" style="--i:${i};--c:${f.color}">
-          <header>
-            <span class="name">${esc(f.label)}</span>
-            ${f.info ? `<button class="info-btn" type="button" aria-expanded="false" aria-controls="ex-${esc(f.key)}" title="¿Qué mide?">?</button>` : ''}
-          </header>
-          <div class="val"><span class="v">—</span>${f.unit ? `<small>${esc(f.unit)}</small>` : ''}<span class="trend"></span></div>
-          ${f.numeric ? '<svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/></svg>' : ''}
-          ${f.source === 'col' && f.numeric ? '<div class="range"></div>' : ''}
+      .map((f) => `
+        <article class="kpi" data-key="${esc(f.key)}" style="--c:${f.color}">
+          <div class="kpi-top">
+            <span class="name" title="${esc(f.label)}">${esc(f.label)}</span>
+            ${f.info ? `<button class="info-btn" type="button" aria-label="¿Qué mide ${esc(f.label)}?" data-info="${esc(f.info)}">i</button>` : ''}
+          </div>
+          <div class="kpi-val"><span class="v">—</span>${f.unit ? `<small>${esc(f.unit)}</small>` : ''}</div>
+          <div class="kpi-meta"><span class="trend"></span><span class="range"></span></div>
           <p class="insight"></p>
-          ${f.info ? `<div class="explain" id="ex-${esc(f.key)}"><div><p>${esc(f.info)}</p></div></div>` : ''}
+          ${f.numeric ? '<svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none" aria-hidden="true"><path class="area"/><path class="line"/></svg>' : ''}
         </article>`)
       .join('');
   }
@@ -198,12 +199,12 @@
     for (const r of state.rows) {
       const v = valueOf(r, f);
       if (typeof v === 'number') out.push({ v, t: new Date(r.received_at) });
-      if (out.length >= 40) break;
+      if (out.length >= 60) break;
     }
     return out.reverse();
   }
 
-  function renderSpark(el, pts) {
+  function renderSpark(el, pts, f) {
     const svg = $('.spark', el);
     if (!svg) return;
     if (pts.length < 2) {
@@ -212,10 +213,17 @@
       return;
     }
     const vals = pts.map((p) => p.v);
-    const min = Math.min(...vals);
-    const max = Math.max(...vals);
+    let min = Math.min(...vals);
+    let max = Math.max(...vals);
+    // Misma amplitud mínima que los gráficos: el ruido no se exagera
+    const minSpan = f.minSpan ?? 0;
+    if (max - min < minSpan) {
+      const mid = (min + max) / 2;
+      min = mid - minSpan / 2;
+      max = mid + minSpan / 2;
+    }
     const span = max - min || 1;
-    const xy = pts.map((p, i) => [(i / (pts.length - 1)) * 100, 27 - ((p.v - min) / span) * 24]);
+    const xy = pts.map((p, i) => [(i / (pts.length - 1)) * 100, 28 - ((p.v - min) / span) * 22]);
     const line = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(2)} ${y.toFixed(2)}`).join('');
     $('.line', svg).setAttribute('d', line);
     $('.area', svg).setAttribute('d', `${line}L100 30L0 30Z`);
@@ -225,14 +233,14 @@
     const row = state.lastRow;
     const stale = !state.lastAt || Date.now() - state.lastAt.getTime() > ONLINE_MS;
     for (const f of state.fields.filter((x) => x.card)) {
-      const el = $(`.reading[data-key="${CSS.escape(f.key)}"]`);
+      const el = $(`.kpi[data-key="${CSS.escape(f.key)}"]`);
       if (!el) continue;
       const v = valueOf(row, f);
       tween($('.v', el), v ?? null, digitsOf(f, v));
       el.classList.toggle('stale', stale);
 
       const pts = f.numeric ? sparkSeries(f) : [];
-      renderSpark(el, pts);
+      renderSpark(el, pts, f);
 
       const trend = $('.trend', el);
       if (pts.length >= 2) {
@@ -240,25 +248,25 @@
         const dig = digitsOf(f, d);
         const flat = Math.abs(d) < Math.pow(10, -dig) / 2;
         trend.className = `trend ${flat ? '' : d > 0 ? 'up' : 'down'}`;
-        trend.textContent = flat ? '= estable' : `${d > 0 ? '▲' : '▼'} ${nf(Math.abs(d), dig)}`;
+        trend.textContent = flat ? '— estable' : `${d > 0 ? '▲' : '▼'} ${nf(Math.abs(d), dig)}`;
         trend.title = `Cambio desde las ${hmFmt.format(pts[0].t)}`;
       } else {
         trend.textContent = '';
       }
 
       const range = $('.range', el);
-      if (range) {
-        const min = state.stats[`${f.key}_min`];
-        const max = state.stats[`${f.key}_max`];
-        range.textContent = min == null ? '' : `mín ${fmt(min, f)} · máx ${fmt(max, f)}`;
-        range.title = `Mínimo y máximo de ${RANGE_LABEL[state.range]}`;
-      }
+      const min = state.stats[`${f.key}_min`];
+      const max = state.stats[`${f.key}_max`];
+      range.textContent = min == null ? '' : `${fmt(min, f)} – ${fmt(max, f)}`;
+      range.title = `Mínimo y máximo de ${RANGE_LABEL[state.range]}`;
 
       let text = '';
       try {
         text = (row && f.insight?.(Object.assign({}, row.extra, row))) || '';
       } catch { /* insight inválido: se ignora */ }
-      $('.insight', el).textContent = text;
+      const ins = $('.insight', el);
+      ins.textContent = text;
+      ins.title = text;
 
       if (bump && v != null && !REDUCED) {
         el.classList.remove('bump');
@@ -282,24 +290,37 @@
     }
   }
 
-  // ---------------------------------------------------------- altímetro
-  // Perfil de altitud dibujado con las lecturas reales (sin referencias fijas).
-  const ALT = { x0: 36, x1: 312, y0: 16, y1: 224 };
-
-  function niceRange(lo, hi) {
-    if (hi - lo < 20) {
-      const mid = (lo + hi) / 2;
-      lo = mid - 10;
-      hi = mid + 10;
-    }
-    const pad = (hi - lo) * 0.12;
-    return [lo - pad, hi + pad];
+  // ---------------------------------------------------------- ayuda (ventanita)
+  let popFor = null;
+  function showPopover(btn) {
+    const pop = $('#popover');
+    if (popFor === btn) return hidePopover();
+    hidePopover();
+    pop.textContent = btn.dataset.info;
+    pop.hidden = false;
+    const r = btn.getBoundingClientRect();
+    const w = Math.min(300, innerWidth - 24);
+    pop.style.maxWidth = `${w}px`;
+    const left = Math.max(12, Math.min(r.right - w, innerWidth - w - 12));
+    const top = r.bottom + 8 + pop.offsetHeight > innerHeight ? r.top - pop.offsetHeight - 8 : r.bottom + 8;
+    pop.style.left = `${left}px`;
+    pop.style.top = `${top}px`;
+    btn.setAttribute('aria-expanded', 'true');
+    popFor = btn;
   }
+  function hidePopover() {
+    $('#popover').hidden = true;
+    popFor?.setAttribute('aria-expanded', 'false');
+    popFor = null;
+  }
+
+  // ---------------------------------------------------------- altímetro
+  // Perfil de altitud con las lecturas reales (sin referencias fijas).
+  const ALT = { w: 320, h: 120, pad: 10 };
 
   function renderAltimeter() {
     const show = hasField('altitude');
     $('#altimeter').hidden = !show;
-    updateSide();
     if (!show) return;
 
     const pts = state.rows.filter((r) => r.altitude != null).slice(0, 100).reverse();
@@ -307,28 +328,28 @@
     const vals = pts.map((r) => r.altitude);
     const lo = Math.min(...vals);
     const hi = Math.max(...vals);
-    const [a, b] = niceRange(lo, hi);
-    const X = (i) => ALT.x0 + (pts.length === 1 ? (ALT.x1 - ALT.x0) : (i / (pts.length - 1)) * (ALT.x1 - ALT.x0));
-    const Y = (v) => ALT.y1 - ((v - a) / (b - a)) * (ALT.y1 - ALT.y0);
+    let a = lo;
+    let b = hi;
+    if (b - a < 10) { const m = (a + b) / 2; a = m - 5; b = m + 5; }
+    const X = (i) => (pts.length === 1 ? ALT.w : (i / (pts.length - 1)) * ALT.w);
+    const Y = (v) => ALT.h - ALT.pad - ((v - a) / (b - a)) * (ALT.h - 2 * ALT.pad);
 
-    // Grilla con 4 valores
     let g = '';
-    for (let k = 0; k <= 3; k++) {
-      const v = a + ((b - a) * k) / 3;
-      const y = Y(v);
-      g += `<line x1="${ALT.x0}" x2="${ALT.x1}" y1="${y.toFixed(1)}" y2="${y.toFixed(1)}"/><text x="${ALT.x0 - 5}" y="${(y + 3.5).toFixed(1)}" text-anchor="end">${nf(v)}</text>`;
+    for (let k = 1; k <= 2; k++) {
+      const y = (ALT.h * k) / 3;
+      g += `<line x1="0" x2="${ALT.w}" y1="${y}" y2="${y}"/>`;
     }
     $('#altGrid').innerHTML = g;
 
     const xy = pts.map((r, i) => [X(i), Y(r.altitude)]);
-    if (xy.length === 1) xy.unshift([ALT.x0, xy[0][1]]);
+    if (xy.length === 1) xy.unshift([0, xy[0][1]]);
     const line = xy.map(([x, y], i) => `${i ? 'L' : 'M'}${x.toFixed(1)} ${y.toFixed(1)}`).join('');
     $('#altLine').setAttribute('d', line);
-    $('#altArea').setAttribute('d', `${line}L${ALT.x1} ${ALT.y1}L${xy[0][0].toFixed(1)} ${ALT.y1}Z`);
+    $('#altArea').setAttribute('d', `${line}L${ALT.w} ${ALT.h}L0 ${ALT.h}Z`);
 
     const last = xy[xy.length - 1];
-    $('#altMarker').style.transform = `translate(${last[0]}px, ${last[1]}px)`;
-    $('#altMax').style.transform = `translate(0px, ${Y(hi)}px)`;
+    $('#altMarker').setAttribute('transform', `translate(${Math.min(last[0], ALT.w - 4)} ${last[1]})`);
+    $('#altMax').setAttribute('transform', `translate(0 ${Y(hi)})`);
 
     const r = pts[pts.length - 1];
     tween($('#altNow'), r.altitude, 0);
@@ -339,8 +360,8 @@
 
     const measured = r.pressure != null;
     const p = measured ? r.pressure : PHYS.pressureAt(r.altitude);
-    $('#altO2').textContent = `Cada respiración aporta ≈ ${Math.round((p / PHYS.P0) * 100)} % del oxígeno que a nivel del mar`
-      + (measured ? '' : ' (estimado por altura)');
+    $('#altO2').textContent = `Oxígeno por respiración ≈ ${Math.round((p / PHYS.P0) * 100)} % del nivel del mar`
+      + (measured ? '' : ' (estimado)');
   }
 
   // ---------------------------------------------------------- gráficos
@@ -459,6 +480,7 @@
               border: { display: false },
               ticks: {
                 maxTicksLimit: 4,
+                includeBounds: false,
                 padding: 8,
                 callback(v) {
                   const span = this.max - this.min;
@@ -523,7 +545,8 @@
       const d = c.data.datasets[0].data;
       if (!d.length) { el.textContent = ''; continue; }
       const avg = d.reduce((a, p) => a + p.y, 0) / d.length;
-      el.textContent = `actual ${fmt(d[d.length - 1].y, f)} · prom. ${fmt(avg, f)}`;
+      el.textContent = `${fmt(d[d.length - 1].y, f)} ${f.unit}`;
+      el.title = `Promedio del período: ${fmt(avg, f)} ${f.unit}`;
     }
   }
 
@@ -622,9 +645,25 @@
     return `<div class="gps-marker${stale ? ' stale' : ''}"><span class="pulse"></span><span class="heading"></span><span class="dot"></span></div>`;
   }
 
+  function renderGpsStats(row, hasFix, sats, hdop, pts, last) {
+    let km = 0;
+    if (map) for (let i = 1; i < pts.length; i++) km += map.distance(pts[i - 1], pts[i]) / 1000;
+    const goodHdop = hdop != null && hdop < 50;
+    const items = [
+      ['Señal', hasFix ? '<span class="ok">● Con posición</span>' : '<span class="warn">● Buscando satélites</span>'],
+      ['Satélites', sats != null ? `${sats}${sats >= 6 ? ' · confiable' : sats >= 4 ? ' · aceptable' : ''}` : '—'],
+      ['Precisión', hasFix && goodHdop ? `± ${nf(Math.max(2, hdop * 5), 0)} m (HDOP ${nf(hdop, 1)})` : '—'],
+      ['Velocidad', hasFix && row?.speed != null ? `${nf(row.speed, 1)} km/h` : '—'],
+      ['Altitud GPS', hasFix && row?.extra?.gps_altitude != null ? `${nf(row.extra.gps_altitude, 0)} m` : '—'],
+      ['Coordenadas', last ? `${nf(last.latitude, 5)}, ${nf(last.longitude, 5)}` : '—'],
+      ['Recorrido', pts.length > 1 ? (km < 1 ? `${nf(km * 1000, 0)} m` : `${nf(km, 2)} km`) : '—'],
+      ['Última posición', last ? relTime(new Date(last.received_at)) : 'sin datos'],
+    ];
+    $('#gpsStats').innerHTML = items.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  }
+
   function renderGps(fit) {
-    $('#mapa').hidden = $('#dashboard').hidden;
-    if ($('#mapa').hidden) return;
+    if ($('#dashboard').hidden) return;
     ensureMap();
     if (!map) return;
     map.invalidateSize();
@@ -649,10 +688,10 @@
     chips.push(`<span class="chip ${hasFix ? 'ok' : 'warn'}"><i></i>${hasFix ? 'GPS con señal' : 'Sin señal GPS'}</span>`);
     if (sats != null) chips.push(`<span class="chip">${sats} satélites</span>`);
     if (hasFix && hdop != null) chips.push(`<span class="chip">± ${nf(Math.max(2, hdop * 5), 0)} m</span>`);
-    if (hasFix && row.speed != null) chips.push(`<span class="chip">${nf(row.speed, 1)} km/h</span>`);
     $('#gpsHud').innerHTML = chips.join('');
 
     trackLine.setLatLngs(pts);
+    renderGpsStats(row, hasFix, sats, hdop, pts, last);
     if (!last) {
       $('#gpsInfo').textContent = 'Sin posiciones registradas todavía';
       return;
@@ -729,12 +768,6 @@
     $('.dash-main').hidden = charts.size === 0;
   }
 
-  // La columna derecha (altímetro y mapa) solo ocupa lugar si tiene algo que mostrar
-  function updateSide() {
-    const empty = $('#altimeter').hidden;
-    $('#dashSide').hidden = empty;
-    $('#dashGrid').classList.toggle('no-side', empty);
-  }
 
   // ---------------------------------------------------------- dispositivos
   async function loadDevices() {
@@ -862,15 +895,15 @@
     document.fonts?.ready.then(moveThumb);
     moveThumb();
 
-    // Botones "?" de las tarjetas y el altímetro
+    // Botones de ayuda (i): ventanita flotante que no mueve el diseño
     document.addEventListener('click', (e) => {
       const btn = e.target.closest('.info-btn');
-      if (!btn) return;
-      const panel = document.getElementById(btn.getAttribute('aria-controls'));
-      const open = btn.getAttribute('aria-expanded') !== 'true';
-      btn.setAttribute('aria-expanded', String(open));
-      panel?.classList.toggle('open', open);
+      if (btn) return showPopover(btn);
+      if (!e.target.closest('#popover')) hidePopover();
     });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hidePopover(); });
+    addEventListener('scroll', hidePopover, { passive: true });
+    addEventListener('resize', hidePopover);
 
     $('#year').textContent = new Date().getFullYear();
     $('#endpointUrl').textContent = `${location.origin}/api/telemetry`;
