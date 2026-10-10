@@ -22,7 +22,7 @@
 #define SERVO2_PIN    2
 
 // ---------------- CONFIGURACION ----------------
-#define ALTITUDE_THRESHOLD_M  15.0f
+#define ALTITUDE_THRESHOLD_M  10.0f
 #define BASELINE_SAMPLES      30
 #define INTERVAL_MS           250
 
@@ -255,14 +255,19 @@ void loop() {
 
   // SIMULACION: detecta y reporta sin uso manual
   if (!thresholdDetected && altitudeM > ALTITUDE_THRESHOLD_M) {
-    thresholdDetected = true;
+   thresholdDetected = true;
 
-    Serial.println();
-    Serial.println("==================================");
-    Serial.println("EVENTO SIMULADO: algo excedido");
-    Serial.println("La altitud relativa esta sobre los 15m");
-    Serial.println("Los servos no fueron automatizados aun");
-    Serial.println("==================================");
-    Serial.println();
+  Serial.println();
+  Serial.println("==================================");
+  Serial.println("EVENTO DETECTADO: altitud superior a 10 m");
+
+  servo1.write(180);
+  servo2.write(180);
+
+  Serial.println("Servo 1: comando a 180 grados");
+  Serial.println("Servo 2: comando a 180 grados");
+
+  Serial.println("==================================");
+  Serial.println();
   }
 }
