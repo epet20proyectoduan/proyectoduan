@@ -1,3 +1,12 @@
+//Comprobar existencia de puertos COM y LPT cuando esta conectado el USB del ESP32. En caso de no reconocerlo descargar controlador universal para Windows "CP210x" (Silicon Labs)
+//Buscar en "boards manager" esp32 y descargar (esp32 - Espressif Systems), luego seleccionar NodeMCU-32s
+//LIBRERÍAS (Arduino IDE → Herramientas → Administrar bibliotecas → ultimas versiones)
+//*    - Adafruit BMP3XX Library   (instala también Adafruit Unified Sensor y BusIO)
+//*    - ESP32Servo                (Kevin Harrington)
+//*  PLACA: "ESP32 Dev Module"
+//Actualmente los servos usan angulos de referencia de 0° y 180°
+
+
 
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
@@ -12,23 +21,23 @@
 #define SERVO1_PIN    25
 #define SERVO2_PIN    2
 
-// ---------------- CONFIGURATION ----------------
+// ---------------- CONFIGURACION ----------------
 #define ALTITUDE_THRESHOLD_M  15.0f
 #define BASELINE_SAMPLES      30
 #define INTERVAL_MS           250
 
-// ---------------- OBJECTS ----------------
+// ---------------- DEFINICION OBJETOS ----------------
 Adafruit_BMP3XX bmp;
 Servo servo1;
 Servo servo2;
 
-// Initial pressure in Pa
+// Presion inicial en Pa
 float baselinePressurePa = 0.0f;
 
 bool thresholdDetected = false;
 unsigned long lastReading = 0;
 
-// ---------------- RELATIVE ALTITUDE ----------------
+// ---------------- ALTITUD RELATIVA ----------------
 float calculateRelativeAltitude(float pressurePa) {
   if (baselinePressurePa <= 0.0f || pressurePa <= 0.0f) {
     return NAN;
@@ -38,14 +47,14 @@ float calculateRelativeAltitude(float pressurePa) {
          (1.0f - powf(pressurePa / baselinePressurePa, 0.19029495f));
 }
 
-// ---------------- INITIAL CALIBRATION ----------------
+// ---------------- CALIBRACION----------------
 bool calibrateInitialPressure() {
   double pressureSum = 0.0;
   int validReadings = 0;
 
   Serial.println();
-  Serial.println("Calibrating initial pressure...");
-  Serial.println("Keep the BMP390 still at ambient pressure.");
+  Serial.println("Calibrando presion inicial...");
+  Serial.println("Mantene el BMP390 a temperatura ambiente.");
 
   for (int i = 0; i < BASELINE_SAMPLES; i++) {
     if (bmp.performReading() && bmp.pressure > 0.0f) {
@@ -57,69 +66,68 @@ bool calibrateInitialPressure() {
   }
 
   if (validReadings < BASELINE_SAMPLES * 0.8f) {
-    Serial.println("ERROR: Not enough valid readings.");
+    Serial.println("ERROR: No hay suficientes lecturas.");
     return false;
   }
 
   baselinePressurePa = pressureSum / validReadings;
 
-  Serial.print("Initial pressure: ");
+  Serial.print("Presion inicial: ");
   Serial.print(baselinePressurePa / 100.0f, 2);
   Serial.println(" hPa");
 
-  Serial.println("Initial relative altitude: 0 m");
+  Serial.println("Altitud relativa inicial: 0 m");
   return true;
 }
 
-// ---------------- MANUAL SERVO CONTROL ----------------
+// ---------------- CONTROL DEL SERVO POR COMANDOS DE CONSOLA ----------------
 void showHelp() {
   Serial.println();
   Serial.println("Available commands:");
-  Serial.println("  1 = Servo 1 to 0 degrees");
-  Serial.println("  2 = Servo 1 to 90 degrees");
-  Serial.println("  3 = Servo 2 to 0 degrees");
-  Serial.println("  4 = Servo 2 to 90 degrees");
-  Serial.println("  a = Both servos to 0 degrees");
-  Serial.println("  b = Both servos to 90 degrees");
-  Serial.println("  h = Show this help");
+  Serial.println("  1 = Servo 1 a 0°");
+  Serial.println("  2 = Servo 1 a 180°");
+  Serial.println("  3 = Servo 2 a 0 °");
+  Serial.println("  4 = Servo 2 a 180°");
+  Serial.println("  a = Ambos servos a 0°");
+  Serial.println("  b = Ambos servos a 180°");
+  Serial.println("  h = Ayuda de comandos");
   Serial.println();
-  Serial.println("The 15 m threshold only generates a serial message.");
 }
 
 void processCommand(char command) {
   switch (command) {
     case '1':
       servo1.write(0);
-      Serial.println("Servo 1: command to 0 degrees");
+      Serial.println("Servo 1: comando a 0 grados");
       break;
 
     case '2':
-      servo1.write(90);
-      Serial.println("Servo 1: command to 90 degrees");
+      servo1.write(180);
+      Serial.println("Servo 1: comando a 180 grados");
       break;
 
     case '3':
       servo2.write(0);
-      Serial.println("Servo 2: command to 0 degrees");
+      Serial.println("Servo 2: comando a 0 grados");
       break;
 
     case '4':
-      servo2.write(90);
-      Serial.println("Servo 2: command to 90 degrees");
+      servo2.write(180);
+      Serial.println("Servo 2: comando a 180 grados");
       break;
 
     case 'a':
     case 'A':
       servo1.write(0);
       servo2.write(0);
-      Serial.println("Both servos: command to 0 degrees");
+      Serial.println("Ambos servos: comando a 0 grados");
       break;
 
     case 'b':
     case 'B':
-      servo1.write(90);
-      servo2.write(90);
-      Serial.println("Both servos: command to 90 degrees");
+      servo1.write(180);
+      servo2.write(180);
+      Serial.println("Ambos servos: comando a 180 grados");
       break;
 
     case 'h':
@@ -150,10 +158,10 @@ void setup() {
   Serial.println("Modo simulacion");
   Serial.println("==================================");
 
-  // Initialize I2C using the original circuit pins
+  // Inicializar I2C usando los pines del circuito original
   Wire.begin(I2C_SDA, I2C_SCL);
 
-  // Initialize BMP390 over I2C
+  // Inicializar BMP390 sobre I2C
   if (!bmp.begin_I2C()) {
     Serial.println("ERROR: BMP390 no detectado.");
     Serial.println("Fijarse en conexiones de fuente, SDA, SCL y I2C.");
@@ -170,7 +178,7 @@ void setup() {
 
   Serial.println("BMP390 detectado bien");
 
-  // Initialize servos
+  // Inicializar servos
   servo1.setPeriodHertz(50);
   servo2.setPeriodHertz(50);
 
@@ -186,7 +194,7 @@ void setup() {
     }
   }
 
-  // Initial test position
+  // Posicion inicial
   servo1.write(0);
   servo2.write(0);
 
@@ -195,7 +203,7 @@ void setup() {
 
   showHelp();
 
-  // Establish the altitude reference
+  // Define altitud de referencia
   if (!calibrateInitialPressure()) {
     Serial.println("No se puede calcular la altitud");
     while (true) {
@@ -209,12 +217,12 @@ void setup() {
 
 // ---------------- MAIN LOOP ----------------
 void loop() {
-  // Read commands from Serial Monitor
+  // Leer comandos del monitor serial
   while (Serial.available() > 0) {
     processCommand((char)Serial.read());
   }
 
-  // Update readings at regular intervals
+  // Actualizar lectura a valores regulares
   unsigned long currentTime = millis();
 
   if (currentTime - lastReading < INTERVAL_MS) {
@@ -245,7 +253,7 @@ void loop() {
   Serial.print(altitudeM, 2);
   Serial.println(" m");
 
-  // SIMULATION: detect and report, without automatic actuation
+  // SIMULACION: detecta y reporta sin uso manual
   if (!thresholdDetected && altitudeM > ALTITUDE_THRESHOLD_M) {
     thresholdDetected = true;
 
