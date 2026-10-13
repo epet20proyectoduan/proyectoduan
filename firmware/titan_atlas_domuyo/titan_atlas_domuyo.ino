@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.1
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.2
  *  ESP32-S + BMP390 + GPS GY-GPS6MV2 (NEO-6M) + MPU6050 (opcional)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
@@ -38,6 +38,11 @@
  *    Durante el vuelo se pierde la señal: las lecturas quedan en memoria (hasta
  *    5 minutos) y en la SD, y se envían solas cuando vuelve la conexión.
  *  LED azul de la placa (GPIO2), para saber qué pasa sin notebook:
+ *    AL ENCENDER: destellos según el motivo del arranque
+ *      1 = encendido normal · 2 = BROWNOUT (caída de tensión) · 3 = error · 4 = watchdog
+ *      y queda fijo mientras inicia. Si los destellos se repiten cada pocos
+ *      segundos, el ESP32 se está reiniciando (casi siempre por alimentación).
+ *    DESPUÉS, funcionando:
  *    titila rápido (2 por segundo) → está enviando datos
  *    un destello corto por segundo → no tiene WiFi
  *    encendido fijo                → tiene WiFi pero el servidor no responde
@@ -735,6 +740,18 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
   }
 }
 
+// Cantidad de destellos del LED al arrancar, según el motivo del arranque
+int bootBlinkCount() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_BROWNOUT: return 2;
+    case ESP_RST_PANIC:    return 3;
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:      return 4;
+    default:               return 1;
+  }
+}
+
 // Motivo corto del arranque, para mandarlo a la página
 const char *bootReasonShort() {
   switch (esp_reset_reason()) {
@@ -860,14 +877,24 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.1");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.2");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
   bootReason = bootReasonShort();
 
+  // Código de arranque en el LED azul (sirve sin notebook ni SD):
+  //   1 destello = encendido normal · 2 = BROWNOUT · 3 = error del programa · 4 = watchdog
+  //   después queda fijo mientras inicia; cuando arranca el loop pasa al modo normal.
+  //   Si los destellos se repiten cada pocos segundos, el ESP32 se está reiniciando.
   pinMode(STATUS_LED_PIN, OUTPUT);
-  digitalWrite(STATUS_LED_PIN, LOW);
+  int blinks = bootBlinkCount();
+  for (int i = 0; i < blinks; i++) {
+    digitalWrite(STATUS_LED_PIN, HIGH); delay(120);
+    digitalWrite(STATUS_LED_PIN, LOW);  delay(220);
+  }
+  delay(400);
+  digitalWrite(STATUS_LED_PIN, HIGH);   // fijo mientras inicializa
 
   setenv("TZ", "UTC0", 1);
   tzset();
