@@ -162,6 +162,24 @@
 
   const hasField = (k) => state.fields.some((f) => f.key === k);
 
+  // Variables con columna propia que tuvieron datos alguna vez (según las estadísticas
+  // totales). Si en las últimas lecturas no aparecen, igual se muestran, marcadas como
+  // "sin dato", para que se note qué sensor dejó de responder.
+  const HISTORIC = ['temperature', 'humidity', 'pressure', 'altitude', 'speed', 'battery', 'rssi'];
+  function addHistoricFields() {
+    let added = false;
+    for (const k of HISTORIC) {
+      if (state.totals[`${k}_max`] == null || hasField(k)) continue;
+      const f = describe(k, 'col');
+      if (f.card === false) continue;
+      state.fields.push(f);
+      added = true;
+    }
+    if (added) {
+      state.fields.sort((a, b) => (GROUP_ORDER[a.group] ?? 9) - (GROUP_ORDER[b.group] ?? 9) || a.order - b.order || a.key.localeCompare(b.key));
+    }
+  }
+
   // ---------------------------------------------------------- enlace
   function setLink(name, label) {
     const el = $('#linkStatus');
@@ -266,6 +284,9 @@
       try {
         text = (row && f.insight?.(Object.assign({}, row.extra, row))) || '';
       } catch { /* insight inválido: se ignora */ }
+      const missing = row && v == null;
+      el.classList.toggle('missing', !!missing);
+      if (missing) text = 'Sin dato en la última lectura · revisar el sensor';
       const ins = $('.insight', el);
       ins.textContent = text;
       ins.title = text;
@@ -860,6 +881,7 @@
       state.lastAt = state.lastRow ? new Date(state.lastRow.received_at) : null;
       state.fields = [];
       discover(rows);
+      addHistoricFields();
       // Las secciones se muestran antes de crear los gráficos para que tengan tamaño
       $('#dashboard').hidden = !rows.length;
       $('#waiting').hidden = !!rows.length;

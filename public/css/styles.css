@@ -304,3 +304,8 @@ table.data { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
 }
+
+/* Sensor que dejó de enviar datos */
+.kpi.missing { border-style: dashed; }
+.kpi.missing .v { color: var(--faint); }
+.kpi.missing .insight { color: var(--warn); }
