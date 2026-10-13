@@ -72,6 +72,11 @@ window.PHYS = (() => {
       insight: (r) => (r.alt_rel == null ? null : r.alt_rel >= 0 ? `${nf(r.alt_rel, 1)} m por encima del punto de inicio` : `${nf(-r.alt_rel, 1)} m por debajo del punto de inicio`),
     },
     {
+      key: 'max_alt_rel', label: 'Altura máxima', unit: 'm', digits: 1, minSpan: 5, group: 'posicion', color: '#4ADE80', chart: false,
+      info: 'La mayor altura sobre el punto de lanzamiento registrada desde que se encendió el ESP32. Después del vuelo indica el apogeo alcanzado.',
+      insight: (r) => (r.max_alt_rel == null ? null : 'Apogeo registrado desde el encendido'),
+    },
+    {
       key: 'speed', label: 'Velocidad', unit: 'km/h', digits: 1, minSpan: 5, card: false, group: 'posicion', color: '#F472B6',
       info: 'Velocidad calculada por el GPS a partir de posiciones sucesivas. Con la estación quieta puede marcar 1 o 2 km/h por el error propio del GPS.',
       insight: (r) => (r.speed == null ? null : `${nf(r.speed / 3.6, 2)} m/s`),
@@ -112,7 +117,17 @@ window.PHYS = (() => {
     { key: 'longitude', label: 'Longitud', unit: '°', digits: 5, group: 'posicion', chart: false, card: false },
     {
       key: 'battery', label: 'Batería', unit: 'V', digits: 2, minSpan: 0.2, group: 'sistema', color: '#FACC15',
-      info: 'Tensión de la batería de la estación. Con frío intenso las baterías entregan menos energía, por eso conviene vigilarla de cerca.',
+      info: 'Tensión de las dos baterías Li-ion en serie: 8,4 V cargadas y unos 6,6 V vacías. Con batería baja, el pico de corriente de los servos puede reiniciar el ESP32 justo al abrir el paracaídas: conviene lanzar con más del 50 %.',
+      insight: (r) => (r.battery_pct == null ? null
+        : r.battery_pct < 20 ? `${r.battery_pct} % · cargar antes de lanzar`
+          : r.battery_pct < 50 ? `${r.battery_pct} % · carga media` : `${r.battery_pct} % · lista para el vuelo`),
+    },
+    { key: 'battery_pct', label: 'Carga de batería', unit: '%', digits: 0, card: false, chart: false },
+    {
+      key: 'parachute', label: 'Paracaídas', unit: '', group: 'posicion', color: '#FF6B35', chart: false,
+      info: 'Estado del sistema de recuperación. "En espera": todavía no superó la altura mínima. "Armado": superó la altura mínima y espera el apogeo (cuando el cohete deja de subir). "Desplegado": los servos ya liberaron el paracaídas.',
+      insight: (r) => (r.parachute === 'desplegado' ? `Abierto · altura máxima ${r.max_alt_rel != null ? nf(r.max_alt_rel, 1) + ' m' : '—'}`
+        : r.parachute === 'armado' ? 'Esperando el apogeo' : r.parachute ? 'Debajo de la altura mínima' : null),
     },
     {
       key: 'rssi', label: 'Señal WiFi', unit: 'dBm', digits: 0, minSpan: 10, group: 'sistema', color: '#22D3EE',
