@@ -123,6 +123,10 @@ window.PHYS = (() => {
           : r.battery_pct < 50 ? `${r.battery_pct} % · carga media` : `${r.battery_pct} % · lista para el vuelo`),
     },
     { key: 'battery_pct', label: 'Carga de batería', unit: '%', digits: 0, card: false, chart: false },
+    // Diagnóstico del ESP32 (se ven en la tabla de registros)
+    { key: 'boot', label: 'Último arranque', unit: '', card: false, chart: false },
+    { key: 'wifi_drops', label: 'Cortes de WiFi', unit: '', digits: 0, card: false, chart: false },
+    { key: 'send_errors', label: 'Envíos fallidos', unit: '', digits: 0, card: false, chart: false },
     {
       key: 'parachute', label: 'Paracaídas', unit: '', group: 'posicion', color: '#FF6B35', chart: false,
       info: 'Estado del sistema de recuperación. "En espera": todavía no superó la altura mínima. "Armado": superó la altura mínima y espera el apogeo (cuando el cohete deja de subir). "Desplegado": los servos ya liberaron el paracaídas.',

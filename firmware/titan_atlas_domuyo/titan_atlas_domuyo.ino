@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.0
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.1
  *  ESP32-S + BMP390 + GPS GY-GPS6MV2 (NEO-6M) + MPU6050 (opcional)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
@@ -37,7 +37,12 @@
  *  WIFI: el ESP32 lo trae incorporado, no lleva cables. Se configura en secrets.h.
  *    Durante el vuelo se pierde la señal: las lecturas quedan en memoria (hasta
  *    5 minutos) y en la SD, y se envían solas cuando vuelve la conexión.
- *  LED azul de la placa (GPIO2): cambia de estado con cada envío correcto.
+ *  LED azul de la placa (GPIO2), para saber qué pasa sin notebook:
+ *    titila rápido (2 por segundo) → está enviando datos
+ *    un destello corto por segundo → no tiene WiFi
+ *    encendido fijo                → tiene WiFi pero el servidor no responde
+ *  Sin notebook, los cortes de WiFi, los errores de envío y el motivo de cada
+ *  reinicio (por ejemplo BROWNOUT) quedan anotados en la SD y se mandan a la página.
  *
  *  LIBRERÍAS (Arduino IDE → Herramientas → Administrar bibliotecas)
  *    - Adafruit BMP3XX Library (instala también Adafruit Unified Sensor y BusIO)
@@ -211,6 +216,15 @@ uint32_t lastBmpTry = 0;           // reintento del BMP390 si no respondió
 uint32_t lastSdFlush = 0;
 uint32_t sendBackoffUntil = 0;     // después de un error de conexión, espera antes de reintentar
 int sdErrors = 0;
+
+// Diagnóstico sin notebook: el evento de WiFi corre en otra tarea, así que solo anota
+// acá y el loop lo escribe en la SD (escribir la SD desde dos tareas a la vez no es seguro)
+volatile uint8_t  wifiLastReason = 0;
+volatile uint32_t wifiDrops = 0;          // cuántas veces se cortó el WiFi desde el encendido
+uint32_t wifiDropsLogged = 0;
+uint32_t sendErrors = 0;                  // envíos fallidos desde el encendido
+uint32_t lastSendOkMs = 0;                // momento del último envío correcto
+const char *bootReason = "";              // motivo del último arranque (texto corto)
 
 // ================================================================ GPS: CONFIGURACIÓN UBX
 
@@ -596,6 +610,10 @@ void toJson(JsonObject o, const Reading &r) {
   o["parachute"] = deployText(r.deploy);
   if (r.rssi) o["rssi"] = r.rssi;
   o["uptime_s"] = r.uptime;
+  // Diagnóstico: se ve en la página aunque no haya notebook conectada
+  o["boot"] = bootReason;
+  o["wifi_drops"] = (uint32_t)wifiDrops;
+  if (sendErrors) o["send_errors"] = sendErrors;
 }
 
 // ================================================================ TARJETA SD
@@ -712,6 +730,37 @@ void onWiFiEvent(WiFiEvent_t event, WiFiEventInfo_t info) {
       (r == 200 || r == 2 || r == 4) ? "señal débil o alimentación insuficiente" :
       (r == 8 || r == 36) ? "reintentando conexión" : "otro motivo";
     Serial.printf("WiFi desconectado · motivo %u: %s\n", r, why);
+    wifiLastReason = r;
+    wifiDrops = wifiDrops + 1;
+  }
+}
+
+// Motivo corto del arranque, para mandarlo a la página
+const char *bootReasonShort() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_POWERON:  return "encendido";
+    case ESP_RST_BROWNOUT: return "brownout";
+    case ESP_RST_PANIC:    return "error";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT:      return "watchdog";
+    case ESP_RST_EXT:      return "boton EN";
+    case ESP_RST_SW:       return "software";
+    default:               return "otro";
+  }
+}
+
+// LED azul de la placa como indicador de estado (no bloquea):
+//   titila con cada envío correcto → está mandando datos
+//   un destello corto por segundo   → no tiene WiFi
+//   encendido fijo                  → tiene WiFi pero el servidor no responde
+void updateStatusLed(uint32_t now) {
+  bool sendingOk = lastSendOkMs && now - lastSendOkMs < 3000;
+  if (sendingOk) return;                                   // lo maneja flush() en cada envío
+  if (WiFi.status() != WL_CONNECTED) {
+    digitalWrite(STATUS_LED_PIN, (now % 1000) < 80 ? HIGH : LOW);
+  } else {
+    digitalWrite(STATUS_LED_PIN, HIGH);
   }
 }
 
@@ -749,6 +798,7 @@ bool flush() {
 
   if (code == 201) {
     dropFromBuffer(n);
+    lastSendOkMs = millis();
     digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN));
     Serial.printf("  Envío correcto: %d lectura(s) en %lu ms · pendientes: %d\n", n, millis() - t0, bufCount);
     return true;
@@ -764,9 +814,18 @@ bool flush() {
                   dns ? ip.toString().c_str() : "FALLÓ", WiFi.RSSI());
     tls.stop();                          // la próxima vez abre una conexión nueva
     sendBackoffUntil = millis() + 3000;  // espera 3 s antes de reintentar (no traba las lecturas)
+    char line[160];
+    snprintf(line, sizeof(line), "# Error de envio (uptime %lu s): %s, TLS: %s, DNS: %s, senal %d dBm",
+             (unsigned long)(millis() / 1000), HTTPClient::errorToString(code).c_str(), err,
+             dns ? "ok" : "FALLO", WiFi.RSSI());
+    sdLogEvent(line);
   } else {
     Serial.printf("  Error HTTP %d: %s\n", code, resp.c_str());
+    char line[120];
+    snprintf(line, sizeof(line), "# Error HTTP %d (uptime %lu s)", code, (unsigned long)(millis() / 1000));
+    sdLogEvent(line);
   }
+  sendErrors++;
 
   if (code == 400) dropFromBuffer(n);   // datos inválidos: se descartan para no trabar la cola
   return false;
@@ -801,10 +860,11 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.0");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.1");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
+  bootReason = bootReasonShort();
 
   pinMode(STATUS_LED_PIN, OUTPUT);
   digitalWrite(STATUS_LED_PIN, LOW);
@@ -864,6 +924,17 @@ void loop() {
     saveToSD(r);
     printReading(r);
   }
+
+  // Cortes de WiFi: se anotan en la SD para poder revisarlos después de una prueba
+  if (wifiDrops != wifiDropsLogged) {
+    wifiDropsLogged = wifiDrops;
+    char line[100];
+    snprintf(line, sizeof(line), "# WiFi desconectado (uptime %lu s): motivo %u, cortes totales %lu",
+             (unsigned long)(now / 1000), (unsigned)wifiLastReason, (unsigned long)wifiDropsLogged);
+    sdLogEvent(line);
+  }
+
+  updateStatusLed(now);
 
   // SD: graba lo pendiente cada 2 s
   if (sdOk && now - lastSdFlush >= SD_FLUSH_MS) {
