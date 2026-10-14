@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.4
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.5
  *  ESP32-S + BMP390 + MPU6050 (opcional)   (sin GPS)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
@@ -23,7 +23,7 @@
  *    BMP390:   VCC → 3V3 · GND → GND · SDA → D21 · SCL → D22
  *    MPU6050:  VCC → 3V3 · GND → GND · SDA → D27 · SCL → D26  (bus I2C propio)
  *    SD HW-125: VCC → 5 V · GND → GND
- *              SCK → D18 · MISO/DO → D32 · MOSI/DI → D23 · CS → D4
+ *              SCK → D18 · MISO/DO → D19 · MOSI/DI → D23 · CS → D5  (VSPI estándar)
  *    Servo 1:  naranja → D25 · rojo → +5–6 V del regulador · marrón → GND común
  *    Servo 2:  naranja → D13 · rojo → +5–6 V del regulador · marrón → GND común
  *    Batería:  + de la batería (7,4 V) → resistencia 100 kΩ → D35 → resistencia 47 kΩ → GND
@@ -111,9 +111,9 @@
 
 // Tarjeta SD (SPI)
 #define SD_SCK_PIN     18
-#define SD_MISO_PIN    32
+#define SD_MISO_PIN    19
 #define SD_MOSI_PIN    23
-#define SD_CS_PIN      4
+#define SD_CS_PIN      5
 #define SD_FILE        "/salidas.csv"
 #define SD_FLUSH_MS    2000       // graba lo pendiente en la tarjeta cada 2 s
 
@@ -772,7 +772,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.4");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.5");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
