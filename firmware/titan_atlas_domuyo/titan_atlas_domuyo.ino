@@ -1,7 +1,7 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.3
- *  ESP32-S + BMP390 + GPS GY-GPS6MV2 (NEO-6M) + MPU6050 (opcional)
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.4
+ *  ESP32-S + BMP390 + MPU6050 (opcional)   (sin GPS)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
  *  Telemetría: 2 lecturas por segundo (cada 0,5 s)
@@ -22,7 +22,6 @@
  *  CONEXIONES (placa ESP32-S de 30 pines) — cada cosa en su propio pin
  *    BMP390:   VCC → 3V3 · GND → GND · SDA → D21 · SCL → D22
  *    MPU6050:  VCC → 3V3 · GND → GND · SDA → D27 · SCL → D26  (bus I2C propio)
- *    GPS:      VCC → 3V3 · GND → GND · TX → RX2/D16 · RX → TX2/D17  (cruzados)
  *    SD HW-125: VCC → 5 V · GND → GND
  *              SCK → D18 · MISO/DO → D32 · MOSI/DI → D23 · CS → D4
  *    Servo 1:  naranja → D25 · rojo → +5–6 V del regulador · marrón → GND común
@@ -52,7 +51,6 @@
  *  LIBRERÍAS (Arduino IDE → Herramientas → Administrar bibliotecas)
  *    - Adafruit BMP3XX Library (instala también Adafruit Unified Sensor y BusIO)
  *    - Adafruit MPU6050
- *    - TinyGPSPlus (Mikal Hart)
  *    - ArduinoJson (Benoit Blanchon) v7
  *    - ESP32Servo (Kevin Harrington) 3.x
  *
@@ -78,7 +76,6 @@
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BMP3XX.h>
 #include <Adafruit_MPU6050.h>
-#include <TinyGPSPlus.h>
 #include <ArduinoJson.h>
 #include <ESP32Servo.h>
 #include <esp_sntp.h>
@@ -107,12 +104,6 @@
 #define MPU_SDA        27         // bus Wire1
 #define MPU_SCL        26
 #define SEA_LEVEL_HPA  1013.25f   // presión a nivel del mar (ajustar con el dato del día)
-
-// GPS GY-GPS6MV2 (NEO-6M)
-#define GPS_RX_PIN     16         // al TX del GPS
-#define GPS_TX_PIN     17         // al RX del GPS
-#define GPS_BAUD       9600
-#define GPS_RATE_MS    500        // el GPS calcula la posición cada 0,5 s
 
 // Acelerómetro MPU6050
 #define ACCEL_RANGE    MPU6050_RANGE_8_G      // 2, 4, 8 o 16 G
@@ -154,8 +145,6 @@ const time_t MIN_VALID_EPOCH = 1700000000;   // antes de esto el reloj no está 
 
 Adafruit_BMP3XX bmp;
 Adafruit_MPU6050 mpu;
-TinyGPSPlus gps;
-HardwareSerial GPSSerial(2);
 WiFiClientSecure tls;
 HTTPClient http;
 Servo servo1, servo2;
@@ -164,7 +153,6 @@ File logFile;
 bool bmpOk = false, mpuOk = false, sdOk = false;
 bool servo1Ok = false, servo2Ok = false;
 bool ntpTimeValid = false;
-bool gpsTimeValid = false;
 bool dateHeaderWritten = false;
 
 // Estado del barómetro (se actualiza a 10 Hz)
@@ -200,12 +188,9 @@ struct Reading {
   uint64_t tsMs;        // hora de la medición en ms (0 si todavía no hay hora)
   float temperature, pressure, altitude, altRel, maxAltRel;
   float accelX, accelY, accelZ, gForce, gMax, pitch, roll, rotation;
-  double latitude, longitude;
-  float gpsAltitude, speed, hdop;
   float battery;        // V
   int   batteryPct;     // %
   uint8_t deploy;       // DeployState
-  int satellites;
   int rssi;
   uint32_t uptime;
 };
@@ -231,36 +216,6 @@ uint32_t sendErrors = 0;                  // envíos fallidos desde el encendido
 uint32_t lastSendOkMs = 0;                // momento del último envío correcto
 const char *bootReason = "";              // motivo del último arranque (texto corto)
 
-// ================================================================ GPS: CONFIGURACIÓN UBX
-
-void sendUbx(const uint8_t *msg, size_t len) {
-  uint8_t a = 0, b = 0;                       // checksum Fletcher de UBX
-  for (size_t i = 0; i < len; i++) { a += msg[i]; b += a; }
-  GPSSerial.write(0xB5);
-  GPSSerial.write(0x62);
-  GPSSerial.write(msg, len);
-  GPSSerial.write(a);
-  GPSSerial.write(b);
-  GPSSerial.flush();
-}
-
-void configureGps() {
-  // Apaga los mensajes NMEA que no se usan (GLL, GSA, GSV, VTG) para que entren
-  // 2 posiciones por segundo a 9600 baudios. Quedan GGA y RMC, que usa TinyGPSPlus.
-  const uint8_t off[][2] = {{0xF0, 0x01}, {0xF0, 0x02}, {0xF0, 0x03}, {0xF0, 0x05}};
-  for (auto &m : off) {
-    uint8_t msg[] = {0x06, 0x01, 0x03, 0x00, m[0], m[1], 0x00};   // CFG-MSG
-    sendUbx(msg, sizeof(msg));
-    delay(30);
-  }
-  // CFG-RATE: una medición cada GPS_RATE_MS
-  uint8_t rate[] = {0x06, 0x08, 0x06, 0x00,
-                    (uint8_t)(GPS_RATE_MS & 0xFF), (uint8_t)(GPS_RATE_MS >> 8),
-                    0x01, 0x00,   // 1 medición por solución
-                    0x01, 0x00};  // referencia de tiempo GPS
-  sendUbx(rate, sizeof(rate));
-}
-
 // ================================================================ HORA
 
 uint64_t nowMs() {
@@ -276,31 +231,9 @@ void onNtpSync(struct timeval *tv) {
   Serial.println("Hora sincronizada por NTP");
 }
 
-// Si todavía no hay NTP pero el GPS tiene hora, la usa para poner en hora el reloj interno
-void syncClockFromGps() {
-  static uint32_t lastSync = 0;
-  if (ntpTimeValid) return;
-  if (nowMs() && millis() - lastSync < 600000) return;   // re-sincroniza cada 10 min
-  if (!gps.date.isValid() || !gps.time.isValid() ||
-      gps.date.year() < 2024 || gps.time.age() > 500) return;
-
-  struct tm t = {};
-  t.tm_year = gps.date.year() - 1900;
-  t.tm_mon  = gps.date.month() - 1;
-  t.tm_mday = gps.date.day();
-  t.tm_hour = gps.time.hour();
-  t.tm_min  = gps.time.minute();
-  t.tm_sec  = gps.time.second();
-  struct timeval tv = {mktime(&t), (suseconds_t)(gps.time.centisecond() * 10000)};
-  settimeofday(&tv, nullptr);
-  lastSync = millis();
-  if (!gpsTimeValid) Serial.println("Hora sincronizada por GPS");
-  gpsTimeValid = true;
-}
-
-// Fecha UTC "AAAA-MM-DD", si el reloj ya fue puesto en hora por NTP o por el GPS
+// Fecha UTC "AAAA-MM-DD", si el reloj ya fue puesto en hora por NTP
 bool getClockDate(char *dateText, size_t dateSize) {
-  if (!ntpTimeValid && !gpsTimeValid) return false;
+  if (!ntpTimeValid) return false;
   time_t seconds = time(nullptr);
   if (seconds < MIN_VALID_EPOCH) return false;
   struct tm timeInfo = {};
@@ -376,13 +309,6 @@ void initMpu() {
   mpu.setGyroRange(GYRO_RANGE);
   mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
   Serial.println("MPU6050 OK");
-}
-
-void initGps() {
-  GPSSerial.begin(GPS_BAUD, SERIAL_8N1, GPS_RX_PIN, GPS_TX_PIN);
-  delay(100);
-  configureGps();
-  Serial.println("GPS iniciado a 2 Hz (el primer fix puede tardar 1-15 min a cielo abierto)");
 }
 
 void readImu() {
@@ -509,9 +435,6 @@ Reading sample() {
   r.tsMs = nowMs();
   r.temperature = r.pressure = r.altitude = r.altRel = r.maxAltRel = NAN;
   r.accelX = r.accelY = r.accelZ = r.gForce = r.gMax = r.pitch = r.roll = r.rotation = NAN;
-  r.latitude = r.longitude = NAN;
-  r.gpsAltitude = r.speed = r.hdop = NAN;
-  r.satellites = -1;
 
   // Barómetro: últimos valores leídos a 10 Hz
   if (bmpOk) {
@@ -535,16 +458,6 @@ Reading sample() {
     r.rotation = sqrtf(imu.gx * imu.gx + imu.gy * imu.gy + imu.gz * imu.gz) * 180.0f / PI;
     imu.gMax = r.gForce;   // reinicia el pico para el próximo intervalo
   }
-
-  // GPS
-  if (gps.location.isValid() && gps.location.age() < 2000) {
-    r.latitude  = gps.location.lat();
-    r.longitude = gps.location.lng();
-  }
-  if (gps.altitude.isValid() && gps.altitude.age() < 2000) r.gpsAltitude = gps.altitude.meters();
-  if (gps.speed.isValid() && gps.speed.age() < 2000)       r.speed = gps.speed.kmph();
-  if (gps.satellites.isValid())                            r.satellites = gps.satellites.value();
-  if (gps.hdop.isValid() && gps.hdop.value() > 0)          r.hdop = gps.hdop.hdop();
 
   // Batería y paracaídas
   r.battery    = readBattery();
@@ -604,12 +517,6 @@ void toJson(JsonObject o, const Reading &r) {
   addIf(o, "pitch", r.pitch);
   addIf(o, "roll", r.roll);
   addIf(o, "rotation", r.rotation);
-  addIf(o, "latitude", r.latitude);
-  addIf(o, "longitude", r.longitude);
-  addIf(o, "gps_altitude", r.gpsAltitude);
-  addIf(o, "speed", r.speed);
-  addIf(o, "hdop", r.hdop);
-  if (r.satellites >= 0) o["satellites"] = r.satellites;
   addIf(o, "battery", r.battery);
   if (r.batteryPct >= 0) o["battery_pct"] = r.batteryPct;
   o["parachute"] = deployText(r.deploy);
@@ -684,7 +591,7 @@ void saveToSD(const Reading &r) {
 
   char dateText[11];
   if (!dateHeaderWritten && getClockDate(dateText, sizeof(dateText))) {
-    logFile.printf("# Fecha UTC: %s (hora por %s)\n", dateText, ntpTimeValid ? "NTP" : "GPS");
+    logFile.printf("# Fecha UTC: %s (hora por NTP)\n", dateText);
     dateHeaderWritten = true;
   }
 
@@ -700,10 +607,6 @@ void saveToSD(const Reading &r) {
   printField("accel_z",      r.accelZ,      4);
   printField("g_max",        r.gMax,        4);
   printField("rotation",     r.rotation,    2);
-  printField("latitude",     r.latitude,    6);
-  printField("longitude",    r.longitude,   6);
-  printField("gps_altitude", r.gpsAltitude, 2);
-  printField("speed",        r.speed,       2);
   printField("battery",      r.battery,     2);
   logFile.printf(", parachute:%s, rssi:%d, uptime_s:%u\n", deployText(r.deploy), r.rssi, (unsigned)r.uptime);
   sdCheckWrite(written);
@@ -857,16 +760,7 @@ void printReading(const Reading &r) {
   if (isfinite(r.battery)) Serial.printf("  Bat=%.2f V (%d%%)", r.battery, r.batteryPct);
   Serial.printf("  Paracaídas=%s", deployText(r.deploy));
   if (mpuOk) Serial.printf("  G=%.2f (máx %.2f)  incl=%.0f°/%.0f°", r.gForce, r.gMax, r.pitch, r.roll);
-
-  // Diagnóstico del GPS: distingue "no conectado" de "conectado buscando satélites"
-  if (gps.charsProcessed() < 10)
-    Serial.println("  GPS: NO RECIBE DATOS -> revisar TX del GPS en RX2/D16, VCC y GND");
-  else if (gps.passedChecksum() == 0)
-    Serial.println("  GPS: llegan datos pero ilegibles -> revisar velocidad (9600) o cable RX/TX");
-  else if (isnan(r.latitude))
-    Serial.printf("  GPS: conectado OK, buscando satélites (%d a la vista)\n", max(r.satellites, 0));
-  else
-    Serial.printf("  GPS: %.6f, %.6f (%d satélites)\n", r.latitude, r.longitude, r.satellites);
+  Serial.println();
 
   if (r.batteryPct >= 0 && r.batteryPct < BATTERY_LOW_PCT)
     Serial.println("  ⚠ BATERÍA BAJA: cargar antes de lanzar");
@@ -878,7 +772,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.3");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.4");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
@@ -906,7 +800,6 @@ void setup() {
   initBattery();
   initBmp();
   initMpu();
-  initGps();
   initWiFi();
   initServos();                // al final: reparte los picos de corriente del arranque
 
@@ -919,10 +812,6 @@ void setup() {
 }
 
 void loop() {
-  // El GPS manda datos todo el tiempo: hay que leerlos siempre
-  while (GPSSerial.available()) gps.encode(GPSSerial.read());
-  syncClockFromGps();
-
   uint32_t now = millis();
 
   // Acelerómetro a 50 Hz para registrar los picos de G
