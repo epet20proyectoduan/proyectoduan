@@ -134,6 +134,12 @@ window.PHYS = (() => {
         : r.parachute === 'armado' ? 'Esperando el apogeo' : r.parachute ? 'Debajo de la altura mínima' : null),
     },
     {
+      key: 'sd', label: 'Tarjeta SD', unit: '', group: 'sistema', color: '#94A3B8', chart: false,
+      info: 'Indica si el ESP32 está guardando las lecturas en la microSD (archivo salidas.csv en la raíz de la tarjeta). La tarjeta se busca solo al encender: si se coloca con el ESP32 prendido, hay que apretar EN.',
+      insight: (r) => (r.sd === 'grabando' ? 'Guardando en salidas.csv'
+        : r.sd ? 'No graba · revisar y apretar EN' : null),
+    },
+    {
       key: 'rssi', label: 'Señal WiFi', unit: 'dBm', digits: 0, minSpan: 10, group: 'sistema', color: '#22D3EE',
       info: 'Intensidad de la señal que recibe el ESP32, en decibel-milivatios. Cuanto más cerca de 0, mejor: −50 es excelente, −70 aceptable y por debajo de −85 la conexión se vuelve inestable.',
       insight: (r) => (r.rssi == null ? null

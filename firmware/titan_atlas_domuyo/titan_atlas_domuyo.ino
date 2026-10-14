@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.2
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.3
  *  ESP32-S + BMP390 + GPS GY-GPS6MV2 (NEO-6M) + MPU6050 (opcional)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
@@ -613,6 +613,7 @@ void toJson(JsonObject o, const Reading &r) {
   addIf(o, "battery", r.battery);
   if (r.batteryPct >= 0) o["battery_pct"] = r.batteryPct;
   o["parachute"] = deployText(r.deploy);
+  o["sd"] = sdOk ? "grabando" : "sin tarjeta";   // estado de la microSD (se ve en el panel)
   if (r.rssi) o["rssi"] = r.rssi;
   o["uptime_s"] = r.uptime;
   // Diagnóstico: se ve en la página aunque no haya notebook conectada
@@ -877,7 +878,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.2");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.3");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
