@@ -27,9 +27,6 @@
     stats: {},
     totals: {},
     rows: [],
-    track: [],      // lecturas con posición
-    trackPts: [],   // [lat, lon] de cada una (para el mapa)
-    trackKm: 0,     // distancia recorrida, calculada de forma incremental
     fields: [],
     bucket: null,
     streamOk: false,
@@ -343,8 +340,20 @@
 
   function renderAltimeter() {
     const show = hasField('altitude');
-    $('#altimeter').hidden = !show;
+    $('#altSection').hidden = !show;
     if (!show) return;
+
+    // El dibujo usa el tamaño real del recuadro para que el punto no se deforme
+    const svg = $('#altSvg');
+    const box = svg.getBoundingClientRect();
+    if (box.width > 0 && box.height > 0) {
+      ALT.w = Math.round(box.width);
+      ALT.h = Math.round(box.height);
+      svg.setAttribute('viewBox', `0 0 ${ALT.w} ${ALT.h}`);
+      $('#altMax line').setAttribute('x2', ALT.w);
+    } else {
+      requestAnimationFrame(() => { if ($('#altSvg').getBoundingClientRect().width > 0) renderAltimeter(); });
+    }
 
     const pts = state.rows.filter((r) => r.altitude != null).slice(0, 100).reverse();
     if (!pts.length) return;
@@ -611,203 +620,6 @@
     }
   }
 
-  // ---------------------------------------------------------- mapa GPS
-  let map, trackLine, liveMarker, startMarker, accuracyCircle;
-  let drawnPts = 0;            // puntos del recorrido ya dibujados en el mapa
-  const MAX_TRACK = 5000;      // tope de puntos en memoria
-
-  // Distancia en km entre dos [lat, lon] (fórmula del haversine)
-  function distKm(a, b) {
-    const R = 6371;
-    const toRad = (d) => (d * Math.PI) / 180;
-    const dLat = toRad(b[0] - a[0]);
-    const dLon = toRad(b[1] - a[1]);
-    const h = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.sin(dLon / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(h));
-  }
-
-  function setTrack(track) {
-    state.track = track;
-    state.trackPts = track.map((p) => [p.latitude, p.longitude]);
-    state.trackKm = 0;
-    for (let i = 1; i < state.trackPts.length; i++) state.trackKm += distKm(state.trackPts[i - 1], state.trackPts[i]);
-    drawnPts = 0;
-  }
-
-  function pushTrack(row) {
-    if (row.latitude == null || row.longitude == null) return;
-    const p = [row.latitude, row.longitude];
-    const pts = state.trackPts;
-    if (pts.length) state.trackKm += distKm(pts[pts.length - 1], p);
-    state.track.push(row);
-    pts.push(p);
-    if (pts.length > MAX_TRACK) {
-      state.trackKm -= distKm(pts[0], pts[1]);
-      state.track.shift();
-      pts.shift();
-      drawnPts = 0;   // obliga a redibujar la línea completa
-    }
-  }
-  let follow = true;
-  let movingProgrammatically = false;
-
-  function ensureMap() {
-    if (map || !window.L) return;
-    map = L.map('map', { scrollWheelZoom: false, zoomControl: false, attributionControl: true })
-      .setView([-38.4, -63.6], 4); // Argentina hasta tener la primera posición
-    L.control.zoom({ position: 'bottomright' }).addTo(map);
-    const esri = (name, maxNativeZoom) => L.tileLayer(`https://server.arcgisonline.com/ArcGIS/rest/services/${name}/MapServer/tile/{z}/{y}/{x}`, { maxZoom: 20, maxNativeZoom, attribution: '© Esri' });
-    const streets = esri('World_Street_Map', 19);
-    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 19, attribution: '© OpenStreetMap', referrerPolicy: 'strict-origin-when-cross-origin' });
-    const sat = L.layerGroup([esri('World_Imagery', 19), esri('Reference/World_Boundaries_and_Places', 19)]);
-    const dark = esri('Canvas/World_Dark_Gray_Base', 16);
-    const topo = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { maxZoom: 20, maxNativeZoom: 17, attribution: '© OpenStreetMap · © OpenTopoMap (CC-BY-SA)' });
-    streets.addTo(map);
-    L.control.layers({ Calles: streets, Satélite: sat, Oscuro: dark, Topográfico: topo, OpenStreetMap: osm }, null, { position: 'topright' }).addTo(map);
-    L.control.scale({ imperial: false, position: 'bottomleft' }).addTo(map);
-
-    trackLine = L.polyline([], { color: '#ff6b35', weight: 3.5, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }).addTo(map);
-    accuracyCircle = L.circle([0, 0], { radius: 1, color: '#38bdf8', weight: 1, fillColor: '#38bdf8', fillOpacity: 0.12, interactive: false });
-
-    // Si el usuario mueve el mapa, deja de seguir al ESP32 hasta que toque "Centrar"
-    map.on('movestart', () => {
-      if (movingProgrammatically) return;
-      follow = false;
-      $('#gpsCenter').hidden = !liveMarker;
-    });
-    map.on('click', () => map.scrollWheelZoom.enable());
-    map.on('mouseout', () => map.scrollWheelZoom.disable());
-    $('#gpsCenter').addEventListener('click', () => {
-      follow = true;
-      $('#gpsCenter').hidden = true;
-      renderGps(false);
-    });
-  }
-
-  function flyTo(ll, zoom) {
-    movingProgrammatically = true;
-    map.once('moveend', () => { movingProgrammatically = false; });
-    if (zoom) map.flyTo(ll, zoom, { duration: REDUCED ? 0 : 1.2 });
-    else map.panTo(ll, { animate: !REDUCED, duration: 0.6 });
-  }
-
-  // Rumbo (0° = norte) entre dos puntos
-  function bearing(a, b) {
-    const toRad = (d) => (d * Math.PI) / 180;
-    const y = Math.sin(toRad(b[1] - a[1])) * Math.cos(toRad(b[0]));
-    const x = Math.cos(toRad(a[0])) * Math.sin(toRad(b[0])) - Math.sin(toRad(a[0])) * Math.cos(toRad(b[0])) * Math.cos(toRad(b[1] - a[1]));
-    return ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
-  }
-
-  function gpsMarkerHtml(stale) {
-    return `<div class="gps-marker${stale ? ' stale' : ''}"><span class="pulse"></span><span class="heading"></span><span class="dot"></span></div>`;
-  }
-
-  function renderGpsStats(row, hasFix, sats, hdop, pts, last) {
-    const km = state.trackKm;
-    const goodHdop = hdop != null && hdop < 50;
-    const items = [
-      ['Señal', hasFix ? '<span class="ok">● Con posición</span>' : '<span class="warn">● Buscando satélites</span>'],
-      ['Satélites', sats != null ? `${sats}${sats >= 6 ? ' · confiable' : sats >= 4 ? ' · aceptable' : ''}` : '—'],
-      ['Precisión', hasFix && goodHdop ? `± ${nf(Math.max(2, hdop * 5), 0)} m (HDOP ${nf(hdop, 1)})` : '—'],
-      ['Velocidad', hasFix && row?.speed != null ? `${nf(row.speed, 1)} km/h` : '—'],
-      ['Altitud GPS', hasFix && row?.extra?.gps_altitude != null ? `${nf(row.extra.gps_altitude, 0)} m` : '—'],
-      ['Coordenadas', last ? `${nf(last.latitude, 5)}, ${nf(last.longitude, 5)}` : '—'],
-      ['Recorrido', pts.length > 1 ? (km < 1 ? `${nf(km * 1000, 0)} m` : `${nf(km, 2)} km`) : '—'],
-      ['Última posición', last ? relTime(new Date(last.received_at)) : 'sin datos'],
-    ];
-    $('#gpsStats').innerHTML = items.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
-  }
-
-  function popupHtml() {
-    const last = state.track[state.track.length - 1];
-    if (!last) return '';
-    const hasFix = state.lastRow?.latitude != null;
-    return `<b>${hasFix ? 'Posición actual' : 'Última posición conocida'}</b><br>${nf(last.latitude, 6)}, ${nf(last.longitude, 6)}${last.altitude != null ? `<br>${nf(last.altitude)} m s.n.m.` : ''}<br>${dateTimeFmt.format(new Date(last.received_at))}`;
-  }
-
-  function renderGps(fit) {
-    if ($('#dashboard').hidden) return;
-    const created = !map;
-    ensureMap();
-    if (!map) return;
-    if (created || fit) map.invalidateSize();
-
-    const row = state.lastRow;
-    const sats = row?.extra?.satellites;
-    const hdop = row?.extra?.hdop;
-    const hasFix = row?.latitude != null && row?.longitude != null;
-    const pts = state.trackPts;
-    const last = state.track[state.track.length - 1];
-
-    // Aviso mientras no hay señal
-    $('#gpsWait').hidden = hasFix;
-    if (!hasFix) {
-      $('#gpsWaitTitle').textContent = last ? 'Señal GPS perdida' : 'Buscando satélites…';
-      $('#gpsWaitText').textContent = (sats != null ? `${sats} satélite${sats === 1 ? '' : 's'} a la vista. ` : '')
-        + (last ? `Se muestra la última posición conocida (${relTime(new Date(last.received_at))}).` : 'Llevá el GPS a cielo abierto: el primer fix puede tardar de 1 a 5 minutos.');
-    }
-
-    // Estado arriba del mapa
-    const chips = [];
-    chips.push(`<span class="chip ${hasFix ? 'ok' : 'warn'}"><i></i>${hasFix ? 'GPS con señal' : 'Sin señal GPS'}</span>`);
-    if (sats != null) chips.push(`<span class="chip">${sats} satélites</span>`);
-    if (hasFix && hdop != null) chips.push(`<span class="chip">± ${nf(Math.max(2, hdop * 5), 0)} m</span>`);
-    $('#gpsHud').innerHTML = chips.join('');
-
-    if (drawnPts === 0 || pts.length < drawnPts) trackLine.setLatLngs(pts);
-    else for (let i = drawnPts; i < pts.length; i++) trackLine.addLatLng(pts[i]);
-    drawnPts = pts.length;
-    renderGpsStats(row, hasFix, sats, hdop, pts, last);
-    if (!last) {
-      $('#gpsInfo').textContent = 'Sin posiciones registradas todavía';
-      return;
-    }
-
-    const ll = [last.latitude, last.longitude];
-    if (!liveMarker) {
-      liveMarker = L.marker(ll, { icon: L.divIcon({ className: '', html: gpsMarkerHtml(!hasFix), iconSize: [44, 44], iconAnchor: [22, 22] }), zIndexOffset: 1000 })
-        .addTo(map)
-        .bindPopup(popupHtml);
-      startMarker = L.marker(pts[0], { icon: L.divIcon({ className: '', html: '<div class="pin-start"></div>', iconSize: [12, 12] }), title: 'Primera posición' })
-        .addTo(map)
-        .bindPopup('<b>Primera posición registrada</b>');
-      fit = true;
-    } else {
-      liveMarker.setLatLng(ll);
-      startMarker.setLatLng(pts[0]);
-      if (liveMarker.isPopupOpen()) liveMarker.setPopupContent(popupHtml());
-    }
-    liveMarker.getElement()?.querySelector('.gps-marker')?.classList.toggle('stale', !hasFix);
-
-    // Flecha de rumbo cuando se está moviendo
-    const el = liveMarker.getElement()?.querySelector('.heading');
-    let prev = null;
-    for (let i = pts.length - 2; i >= Math.max(0, pts.length - 30); i--) {
-      if (distKm(pts[i], ll) > 0.003) { prev = pts[i]; break; }
-    }
-    const moving = hasFix && prev && (row.speed == null || row.speed > 1);
-    if (el) {
-      el.style.opacity = moving ? 1 : 0;
-      if (moving) el.style.transform = `rotate(${bearing(prev, ll)}deg)`;
-    }
-
-    // Círculo de precisión
-    if (hasFix && hdop != null) {
-      accuracyCircle.setLatLng(ll).setRadius(Math.max(2, hdop * 5));
-      if (!map.hasLayer(accuracyCircle)) accuracyCircle.addTo(map);
-    } else if (map.hasLayer(accuracyCircle)) {
-      accuracyCircle.remove();
-    }
-
-    const km = state.trackKm;
-    $('#gpsInfo').textContent = `${nf(last.latitude, 6)}, ${nf(last.longitude, 6)} · recorrido ${km < 1 ? `${nf(km * 1000, 0)} m` : `${nf(km, 2)} km`}`;
-
-    if (fit) flyTo(ll, Math.max(map.getZoom(), 17));
-    // Siguiendo: solo mueve el mapa si el punto se acerca al borde (menos movimientos)
-    else if (follow && !map.getBounds().pad(-0.3).contains(ll)) flyTo(ll);
-  }
-
   // ---------------------------------------------------------- tabla
   function renderTableHead() {
     $('#rowsHead').innerHTML = `<tr><th>Hora</th><th class="l">Dispositivo</th>${state.fields
@@ -858,23 +670,21 @@
 
   // ---------------------------------------------------------- carga
   let loadSeq = 0;
-  async function loadAll({ fit = true } = {}) {
+  async function loadAll() {
     const seq = ++loadSeq;
     const p = { device: state.device };
     $('#exportCsv').href = `/api/export.csv?${qs({ ...p, range: state.range })}`;
     try {
-      const [series, stats, rows, track, totals] = await Promise.all([
+      const [series, stats, rows, totals] = await Promise.all([
         api('series', { ...p, range: state.range }),
         api('stats', { ...p, range: state.range }),
         api('telemetry', { ...p, limit: 100 }),
-        api('track', { ...p, limit: 2000 }),
         api('stats', p),
       ]);
       if (seq !== loadSeq) return;
       state.stats = stats;
       state.totals = totals;
       state.rows = rows;
-      setTrack(track);
       pendingRows.length = 0;
       state.packets = totals.count;
       state.lastRow = rows[0] || null;
@@ -891,7 +701,6 @@
       renderReadings();
       renderSeries(series.points, series.bucket);
       renderTable();
-      renderGps(fit);
       refreshLink();
     } catch (err) {
       console.error(err);
@@ -925,7 +734,6 @@
     }
     if (rows.length) appendTableRows(rows);
     renderVisibility();
-    renderGps(false);
     refreshLink();
   }
 
@@ -935,7 +743,7 @@
       return;
     }
     // Si estuvo mucho tiempo afuera, se resincroniza con el servidor en un solo paso
-    if (hiddenSince && Date.now() - hiddenSince > 30_000) loadAll({ fit: false });
+    if (hiddenSince && Date.now() - hiddenSince > 30_000) loadAll();
     else if (dirty) scheduleRender();
     hiddenSince = 0;
   });
@@ -960,20 +768,19 @@
       if (state.device && row.device_id !== state.device) return;
 
       // Una variable nueva obliga a rearmar tarjetas y gráficos
-      if (discover([row])) return loadAll({ fit: false });
+      if (discover([row])) return loadAll();
 
       state.lastRow = row;
       state.lastAt = new Date(row.received_at);
       state.rows.unshift(row);
       state.rows.length = Math.min(state.rows.length, 100);
       mergeStats(row);
-      pushTrack(row);
 
       if (LIVE_APPEND.has(state.range)) {
         pushChartPoint(row);
       } else {
         clearTimeout(refreshTimer);
-        refreshTimer = setTimeout(() => loadAll({ fit: false }), 30_000);
+        refreshTimer = setTimeout(() => loadAll(), 30_000);
       }
 
       pendingRows.push(row);
@@ -1002,7 +809,7 @@
         $$('#rangeSelect button').forEach((x) => x.setAttribute('aria-checked', String(x === b)));
         moveThumb();
         state.range = b.dataset.range;
-        loadAll({ fit: false });
+        loadAll();
       }),
     );
     addEventListener('resize', moveThumb);
@@ -1018,6 +825,7 @@
     document.addEventListener('keydown', (e) => { if (e.key === 'Escape') hidePopover(); });
     addEventListener('scroll', hidePopover, { passive: true });
     addEventListener('resize', hidePopover);
+    addEventListener('resize', () => { if (!$('#dashboard').hidden) renderAltimeter(); });
 
     $('#year').textContent = new Date().getFullYear();
     $('#endpointUrl').textContent = `${location.origin}/api/telemetry`;

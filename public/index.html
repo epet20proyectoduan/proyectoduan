@@ -21,8 +21,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin>
-  <link rel="stylesheet" href="/css/styles.css?v=19">
+  <link rel="stylesheet" href="/css/styles.css?v=21">
 </head>
 <body>
   <header class="topbar">
@@ -79,36 +78,9 @@
         <div class="kpis" id="readings"></div>
       </section>
 
-      <!-- 2 · Mapa GPS + estado -->
-      <section class="section" aria-labelledby="hGps">
-        <div class="sec-head">
-          <h2 id="hGps">Ubicación GPS</h2>
-          <span class="hint" id="gpsInfo"></span>
-        </div>
-        <div class="map-row">
-          <div class="panel gps-panel" id="mapa">
-            <div id="map" role="region" aria-label="Mapa con la ubicación del ESP32"></div>
-            <div class="gps-hud" id="gpsHud" aria-live="polite"></div>
-            <button class="gps-center" id="gpsCenter" type="button" hidden>◎ Centrar en el ESP32</button>
-            <div class="gps-wait" id="gpsWait" hidden>
-              <div class="gps-wait-card">
-                <span class="radar" aria-hidden="true"></span>
-                <b id="gpsWaitTitle">Buscando satélites…</b>
-                <p id="gpsWaitText"></p>
-              </div>
-            </div>
-          </div>
-
-          <aside class="side">
-            <section class="panel stat-panel" aria-labelledby="hGpsState">
-              <div class="panel-title">
-                <h3 id="hGpsState">Estado del GPS</h3>
-                <button class="info-btn" type="button" data-info="El GPS calcula la posición con la señal de varios satélites. Necesita cielo abierto y al menos 4 satélites. La precisión indica el radio de error aproximado: cuanto más chico, mejor.">i</button>
-              </div>
-              <dl class="stat-list" id="gpsStats"></dl>
-            </section>
-
-            <section class="panel altimeter" id="altimeter" hidden aria-labelledby="hAlt">
+      <!-- 2 · Perfil de altitud -->
+      <section class="section" id="altSection" hidden aria-labelledby="hAlt">
+            <section class="panel altimeter" id="altimeter" aria-labelledby="hAlt">
               <div class="panel-title">
                 <h3 id="hAlt">Perfil de altitud</h3>
                 <button class="info-btn" type="button" data-info="Dibuja la altura de las últimas lecturas del barómetro. La línea punteada marca la máxima alcanzada. Al subir, la presión baja: cada respiración aporta menos oxígeno.">i</button>
@@ -132,8 +104,6 @@
               </svg>
               <p id="altO2" class="alt-foot"></p>
             </section>
-          </aside>
-        </div>
       </section>
 
       <!-- 3 · Gráficos -->
@@ -172,8 +142,7 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin></script>
-  <script src="/js/sensors.js?v=19"></script>
-  <script src="/js/app.js?v=19" defer></script>
+  <script src="/js/sensors.js?v=21"></script>
+  <script src="/js/app.js?v=21" defer></script>
 </body>
 </html>

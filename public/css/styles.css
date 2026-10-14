@@ -171,70 +171,14 @@ select:hover { border-color: var(--muted); }
 }
 @keyframes pop { from { opacity: 0; transform: translateY(4px); } }
 
-/* ---------- Mapa + panel lateral ---------- */
-.map-row { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: var(--gap); align-items: stretch; }
-.side { display: flex; flex-direction: column; gap: var(--gap); }
-.gps-panel { position: relative; overflow: hidden; isolation: isolate; z-index: 0; min-height: 480px; }
-.gps-panel #map { position: absolute; inset: 0; background: #0d1626; }
-.gps-hud { position: absolute; top: 12px; left: 12px; z-index: 500; display: flex; flex-wrap: wrap; gap: 6px; max-width: calc(100% - 80px); pointer-events: none; }
-.gps-hud .chip {
-  display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px;
-  font: 500 12px var(--mono); color: var(--text); background: rgba(10, 17, 32, .85);
-  border: 1px solid var(--border-strong); backdrop-filter: blur(6px);
-}
-.gps-hud .chip i { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
-.gps-hud .chip.ok i { background: var(--ok); box-shadow: 0 0 0 3px rgba(52, 211, 153, .25); }
-.gps-hud .chip.warn i { background: var(--warn); animation: blink 1.4s ease-in-out infinite; }
-@keyframes blink { 50% { opacity: .3; } }
-.gps-center {
-  position: absolute; bottom: 92px; right: 10px; z-index: 500; padding: 7px 12px; border-radius: 999px; cursor: pointer;
-  font: 500 12.5px var(--font); color: #062033; background: var(--data); border: 0; box-shadow: 0 6px 18px rgba(0, 0, 0, .35);
-}
-.gps-center:hover { background: #7dd3fc; }
-.gps-wait { position: absolute; inset: 0; z-index: 450; display: grid; place-items: center; background: rgba(10, 17, 32, .55); pointer-events: none; }
-.gps-wait-card { text-align: center; padding: 18px 22px; max-width: 340px; border-radius: 10px; background: rgba(15, 26, 45, .94); border: 1px solid var(--border-strong); }
-.gps-wait-card b { display: block; font-size: 14px; margin-top: 10px; }
-.gps-wait-card p { margin-top: 4px; font-size: 12.5px; color: var(--text-2); }
-.radar { position: relative; display: inline-block; width: 46px; height: 46px; border-radius: 50%; border: 1px solid rgba(56, 189, 248, .45);
-  background: radial-gradient(circle, rgba(56, 189, 248, .5) 0 3px, transparent 4px), repeating-radial-gradient(circle, transparent 0 10px, rgba(56, 189, 248, .18) 10px 11px); }
-.radar::after { content: ''; position: absolute; inset: 0; border-radius: 50%; background: conic-gradient(from 0deg, rgba(56, 189, 248, .55), transparent 25%); animation: sweep 2s linear infinite; }
-@keyframes sweep { to { transform: rotate(360deg); } }
-
-/* Marcador del ESP32 */
-.gps-marker { position: relative; width: 44px; height: 44px; }
-.gps-marker .dot { position: absolute; left: 50%; top: 50%; width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%; background: var(--accent); border: 3px solid #fff; box-shadow: 0 2px 8px rgba(0, 0, 0, .5); }
-.gps-marker .pulse { position: absolute; inset: 6px; border-radius: 50%; background: rgba(255, 107, 53, .35); animation: gpsPulse 2s ease-out infinite; }
-.gps-marker .heading { position: absolute; inset: 0; transition: transform .8s var(--ease), opacity .3s; opacity: 0; }
-.gps-marker .heading::before { content: ''; position: absolute; left: 50%; top: -2px; margin-left: -7px; border: 7px solid transparent; border-bottom: 12px solid var(--accent); border-top: 0; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, .5)); }
-.gps-marker.stale .dot { background: var(--muted); }
-.gps-marker.stale .pulse { animation: none; opacity: 0; }
-@keyframes gpsPulse { 0% { transform: scale(.5); opacity: .9; } 100% { transform: scale(1.6); opacity: 0; } }
-.pin-start { width: 12px; height: 12px; border-radius: 3px; transform: rotate(45deg); background: #fff; border: 3px solid var(--ok); }
-
-.leaflet-container { font-family: var(--font); background: #0d1626; }
-.leaflet-popup-content-wrapper, .leaflet-popup-tip { background: var(--panel-2); color: var(--text); border-radius: 8px; }
-.leaflet-popup-content { font-size: 13px; }
-.leaflet-control-attribution { background: rgba(10, 17, 32, .8) !important; color: var(--muted) !important; }
-.leaflet-control-attribution a { color: var(--text-2) !important; }
-.leaflet-bar a, .leaflet-control-layers { background: var(--panel) !important; color: var(--text) !important; border-color: var(--border-strong) !important; }
-
-/* Estado del GPS */
-.stat-list { margin: 0; padding: 8px 14px 12px; display: grid; grid-template-columns: auto 1fr; }
-.stat-list dt, .stat-list dd { padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; }
-.stat-list dt { color: var(--muted); }
-.stat-list dd { margin: 0; text-align: right; font-family: var(--mono); color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.stat-list dt:last-of-type, .stat-list dd:last-of-type { border-bottom: 0; }
-.stat-list .ok { color: var(--ok); }
-.stat-list .warn { color: var(--warn); }
-
 /* Altímetro */
-.altimeter { --c: #34d399; display: flex; flex-direction: column; flex: 1; overflow: hidden; }
+.altimeter { --c: #34d399; display: flex; flex-direction: column; overflow: hidden; }
 .alt-body { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; padding: 6px 14px 0; }
 .alt-now { font: 500 26px/1.1 var(--mono); color: #a7f3d0; }
 .alt-now small { font-size: 12.5px; color: var(--muted); margin-left: 4px; }
 .alt-stats { display: flex; gap: 10px; font-size: 11.5px; color: var(--muted); white-space: nowrap; }
 .alt-stats b { font: 500 11.5px var(--mono); color: var(--text-2); }
-.alt-svg { display: block; width: 100%; height: 96px; margin-top: 8px; flex: 1; min-height: 70px; }
+.alt-svg { display: block; width: 100%; height: 160px; margin-top: 8px; }
 .alt-svg .grid line { stroke: var(--border); stroke-dasharray: 2 4; vector-effect: non-scaling-stroke; }
 .alt-area { fill: url(#altFill); }
 .alt-line-path { fill: none; stroke: #34d399; stroke-width: 2; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
@@ -273,16 +217,14 @@ table.data { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .toast.show { opacity: 1; transform: none; }
 
 /* ---------- Responsive ---------- */
+@media (max-width: 640px) { .alt-svg { height: 120px; } }
 @media (max-width: 1200px) {
   .charts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .map-row { grid-template-columns: minmax(0, 1fr) 300px; }
 }
 @media (max-width: 960px) {
   .topbar { position: static; }
   .controls { margin-left: 0; order: 3; width: 100%; }
   .link { margin-left: auto; min-width: 0; }
-  .map-row { grid-template-columns: 1fr; }
-  .side { display: grid; grid-template-columns: 1fr 1fr; }
   .nav { display: none; }
 }
 @media (max-width: 640px) {
@@ -296,10 +238,7 @@ table.data { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   .kpi-val .v { font-size: 24px; }
   .kpi-meta .range { display: none; }
   .charts { grid-template-columns: 1fr; }
-  .side { grid-template-columns: 1fr; }
-  .gps-panel { min-height: 360px; }
   .waiting { grid-template-columns: 1fr; }
-  .gps-center { bottom: 86px; }
 }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; }
