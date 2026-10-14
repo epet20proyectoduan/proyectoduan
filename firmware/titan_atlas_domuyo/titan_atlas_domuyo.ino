@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.5
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.6
  *  ESP32-S + BMP390 + MPU6050 (opcional)   (sin GPS)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
@@ -122,6 +122,8 @@
 #define SERVO2_PIN            13
 #define SERVO_INITIAL_ANGLE   0
 #define SERVO_FINAL_ANGLE     180
+#define SERVO_MIN_US          500     // pulso a 0°   (MG90S: 500–2400 µs = recorrido completo de 180°)
+#define SERVO_MAX_US          2400    // pulso a 180°
 #define DEPLOY_AT_APOGEE      true    // true: abre en el apogeo · false: abre al superar ALTITUDE_THRESHOLD_M
 #define ALTITUDE_THRESHOLD_M  15.0f   // altura mínima sobre el suelo para habilitar (armar) el paracaídas
 #define APOGEE_DROP_M         2.0f    // metros que tiene que bajar desde la máxima para confirmar el apogeo
@@ -363,7 +365,7 @@ void initServos() {
   servo1.setPeriodHertz(50);
   servo2.setPeriodHertz(50);
   // Uno por vez: si arrancan juntos, el pico de corriente puede reiniciar el ESP32
-  servo1.attach(SERVO1_PIN, 1000, 2000);
+  servo1.attach(SERVO1_PIN, SERVO_MIN_US, SERVO_MAX_US);
   servo1Ok = servo1.attached();
   if (servo1Ok) {
     servo1.write(SERVO_INITIAL_ANGLE);
@@ -373,7 +375,7 @@ void initServos() {
   }
   delay(500);
 
-  servo2.attach(SERVO2_PIN, 1000, 2000);
+  servo2.attach(SERVO2_PIN, SERVO_MIN_US, SERVO_MAX_US);
   servo2Ok = servo2.attached();
   if (servo2Ok) {
     servo2.write(SERVO_INITIAL_ANGLE);
@@ -772,7 +774,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.5");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.6");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
