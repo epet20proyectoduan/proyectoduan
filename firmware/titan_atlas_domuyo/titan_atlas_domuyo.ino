@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.9
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.10
  *  ESP32-S + BMP390 + MPU6050 (opcional)   (sin GPS)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
@@ -39,8 +39,10 @@
  *    tarea aparte (núcleo 0): si no hay WiFi o no hay internet, el vuelo no se entera.
  *
  *  WIFI: el ESP32 lo trae incorporado, no lleva cables. Se configura en secrets.h.
- *    Durante el vuelo se pierde la señal: las lecturas quedan en memoria (hasta
- *    2,5 minutos) y en la SD, y se envían solas cuando vuelve la conexión.
+ *    Sin conexión (preparación, vuelo, aterrizaje): en la SD se graba todo, 2 por segundo.
+ *    En la memoria para enviar después se guardan todas las del vuelo y, en la rampa o
+ *    después de aterrizar, 1 cada 5 s: entran ~25 minutos de espera y el vuelo no se pisa.
+ *    Todo se envía solo cuando vuelve la conexión, y se envían solas cuando vuelve la conexión.
  *  LED azul de la placa (GPIO2), para saber qué pasa sin notebook:
  *    AL ENCENDER: destellos según el motivo del arranque
  *      1 = encendido normal · 2 = BROWNOUT (caída de tensión) · 3 = error · 4 = watchdog
@@ -100,6 +102,7 @@
 #define BARO_INTERVAL_MS   100    // la altura se lee 10 veces por segundo (control del paracaídas)
 #define BUFFER_SIZE        300    // lecturas guardadas sin conexión (2,5 minutos a 2 por segundo)
                                   // (se reserva en el heap al arrancar; si no alcanza, usa menos)
+#define OFFLINE_KEEP_MS    5000   // sin conexión y fuera de vuelo: 1 lectura cada 5 s a la memoria
 #define BATCH_SIZE         20     // lecturas máximas por envío (menos memoria: la conexión HTTPS necesita ~45 KB)
 #define SERVER_HOST        "mision-domuyo.up.railway.app"   // solo para el diagnóstico de DNS
 
@@ -184,6 +187,7 @@ enum DeployState { DEPLOY_WAITING = 0, DEPLOY_ARMED = 1, DEPLOY_DONE = 2 };
 DeployState deployState = DEPLOY_WAITING;
 float maxAltRel = NAN;           // altura máxima alcanzada sobre el suelo
 float deployAltRel = NAN;        // altura a la que se abrió
+uint32_t deployAtMs = 0;         // momento en que se abrió (millis)
 
 // Estado del acelerómetro (se actualiza a 50 Hz)
 struct ImuState {
@@ -418,6 +422,7 @@ void sdLogEvent(const char *text);
 void deployParachute(float altRel) {
   deployState = DEPLOY_DONE;
   deployAltRel = altRel;
+  deployAtMs = millis();
   if (servo1Ok) servo1.write(SERVO_FINAL_ANGLE);
   if (servo2Ok) servo2.write(SERVO_FINAL_ANGLE);
 
@@ -517,6 +522,21 @@ void pushBuffer(const Reading &r) {
   buffer[(bufHead + bufCount) % bufferCap] = r;
   bufCount++;
   xSemaphoreGive(bufMutex);
+}
+
+// Qué lecturas van a la memoria para enviar (a la SD van todas):
+//   con WiFi, o en vuelo (despegó, armado, o hasta 60 s después de abrir) → todas
+//   sin WiFi, en la rampa o ya en el suelo                               → 1 cada 5 s
+bool keepInBuffer(uint32_t now) {
+  static uint32_t lastKept = 0;
+  bool flying = deployState == DEPLOY_ARMED
+             || (deployState == DEPLOY_WAITING && isfinite(baro.altFiltered) && baro.altFiltered > 1.0f)
+             || (deployState == DEPLOY_DONE && now - deployAtMs < 60000);
+  if (flying || WiFi.status() == WL_CONNECTED || now - lastKept >= OFFLINE_KEEP_MS) {
+    lastKept = now;
+    return true;
+  }
+  return false;
 }
 
 // Saca de la cola las lecturas ya enviadas (hasta la de número lastSeq inclusive)
@@ -830,7 +850,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.9");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.10");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
@@ -900,7 +920,7 @@ void loop() {
   if (now - lastSample >= SAMPLE_INTERVAL_MS) {
     lastSample = (now - lastSample > 2 * SAMPLE_INTERVAL_MS) ? now : lastSample + SAMPLE_INTERVAL_MS;
     Reading r = sample();
-    pushBuffer(r);
+    if (keepInBuffer(now)) pushBuffer(r);
     saveToSD(r);
     printReading(r);
   }
