@@ -1,13 +1,14 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.8
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.9
  *  ESP32-S + BMP390 + MPU6050 (opcional)   (sin GPS)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
  *  Telemetría: 2 lecturas por segundo (cada 0,5 s)
  *  Paracaídas: se abre en el APOGEO (cuando el cohete deja de subir y empieza
- *              a caer), una vez superados 15 m. La altura se controla 10 veces
- *              por segundo. Ver DEPLOY_AT_APOGEE para volver al modo "a los 15 m".
+ *              a caer 0,5 m), una vez superados 5 m. La altura se controla 10 veces
+ *              por segundo. Mientras espera en la rampa, la referencia del suelo
+ *              sigue los cambios del clima (no se corre aunque pasen varios minutos).
  * ============================================================
  *
  *  ALIMENTACIÓN (importante)
@@ -39,7 +40,7 @@
  *
  *  WIFI: el ESP32 lo trae incorporado, no lleva cables. Se configura en secrets.h.
  *    Durante el vuelo se pierde la señal: las lecturas quedan en memoria (hasta
- *    5 minutos) y en la SD, y se envían solas cuando vuelve la conexión.
+ *    2,5 minutos) y en la SD, y se envían solas cuando vuelve la conexión.
  *  LED azul de la placa (GPIO2), para saber qué pasa sin notebook:
  *    AL ENCENDER: destellos según el motivo del arranque
  *      1 = encendido normal · 2 = BROWNOUT (caída de tensión) · 3 = error · 4 = watchdog
@@ -97,9 +98,9 @@
 #define SEND_INTERVAL_MS   500    // como máximo un envío cada 0,5 s (con todo lo pendiente)
 #define IMU_INTERVAL_MS    20     // el acelerómetro se lee a 50 Hz para no perder picos
 #define BARO_INTERVAL_MS   100    // la altura se lee 10 veces por segundo (control del paracaídas)
-#define BUFFER_SIZE        600    // lecturas guardadas sin conexión (5 minutos a 2 por segundo)
+#define BUFFER_SIZE        300    // lecturas guardadas sin conexión (2,5 minutos a 2 por segundo)
                                   // (se reserva en el heap al arrancar; si no alcanza, usa menos)
-#define BATCH_SIZE         40     // lecturas máximas por envío
+#define BATCH_SIZE         20     // lecturas máximas por envío (menos memoria: la conexión HTTPS necesita ~45 KB)
 #define SERVER_HOST        "mision-domuyo.up.railway.app"   // solo para el diagnóstico de DNS
 
 // I2C: cada sensor en su propio bus
@@ -129,9 +130,11 @@
 #define SERVO_MIN_US          500     // pulso a 0°   (MG90S: 500–2400 µs = recorrido completo de 180°)
 #define SERVO_MAX_US          2400    // pulso a 180°
 #define DEPLOY_AT_APOGEE      true    // true: abre en el apogeo · false: abre al superar ALTITUDE_THRESHOLD_M
-#define ALTITUDE_THRESHOLD_M  15.0f   // altura mínima sobre el suelo para habilitar (armar) el paracaídas
+#define ALTITUDE_THRESHOLD_M  5.0f    // altura mínima sobre el suelo para habilitar (armar) el paracaídas
 #define APOGEE_DROP_M         0.5f    // metros que tiene que bajar desde la máxima para confirmar el apogeo
 #define ALT_FILTER            0.35f   // suavizado de la altura (0-1): más bajo = más suave, más lento
+#define GROUND_TRACK_RATE     0.005f  // en espera, el suelo sigue los cambios del clima (~20 s de constante)
+#define GROUND_TRACK_MAX_M    2.0f    // ...solo si está a menos de 2 m del suelo (en el despegue se congela)
 
 // Batería: divisor 100 kΩ (arriba) / 47 kΩ (abajo) hacia GPIO35, 2 celdas Li-ion en serie
 #define BATTERY_PIN           -1      // poner 35 cuando el divisor esté conectado (-1 = no se mide)
@@ -307,6 +310,15 @@ void readBaro() {
   }
 
   float rel = baro.altitude - groundAltitude;
+
+  // En la rampa, la presión cambia con el clima: mientras espera y está cerca del suelo,
+  // la referencia se corrige de a poco. En el despegue sube rápido y deja de corregirse.
+  if (deployState == DEPLOY_WAITING && fabsf(rel) < GROUND_TRACK_MAX_M) {
+    groundAltitude += GROUND_TRACK_RATE * rel;
+    rel = baro.altitude - groundAltitude;
+    if (!isnan(maxAltRel) && maxAltRel > GROUND_TRACK_MAX_M) maxAltRel = NAN;
+  }
+
   baro.altFiltered = isnan(baro.altFiltered) ? rel : baro.altFiltered + ALT_FILTER * (rel - baro.altFiltered);
   if (isnan(maxAltRel) || baro.altFiltered > maxAltRel) maxAltRel = baro.altFiltered;
 }
@@ -818,7 +830,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.8");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.9");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
@@ -857,7 +869,7 @@ void setup() {
                                        : "Batería: divisor no conectado (no se mide)");
 
   // El envío al servidor corre aparte, en el núcleo 0 (el del WiFi): el loop queda libre
-  xTaskCreatePinnedToCore(netTask, "envio", 16384, nullptr, 1, nullptr, 0);
+  xTaskCreatePinnedToCore(netTask, "envio", 10240, nullptr, 1, nullptr, 0);
 
   Serial.println("\nSistema iniciado (el paracaídas funciona aunque no haya WiFi ni internet)");
 }
@@ -904,8 +916,10 @@ void loop() {
 
   updateStatusLed(now);
 
-  // SD: graba lo pendiente cada 2 s
-  if (sdOk && now - lastSdFlush >= SD_FLUSH_MS) {
+  // SD: graba lo pendiente cada 2 s; desde que se arma, cada 0,5 s (así no se pierde la caída
+  // si el golpe corta la alimentación)
+  uint32_t sdEvery = deployState == DEPLOY_WAITING ? SD_FLUSH_MS : SAMPLE_INTERVAL_MS;
+  if (sdOk && now - lastSdFlush >= sdEvery) {
     lastSdFlush = now;
     logFile.flush();
   }
