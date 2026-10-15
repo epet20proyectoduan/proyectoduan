@@ -42,7 +42,7 @@
  *    Sin conexión (preparación, vuelo, aterrizaje): en la SD se graba todo, 2 por segundo.
  *    En la memoria para enviar después se guardan todas las del vuelo y, en la rampa o
  *    después de aterrizar, 1 cada 5 s: entran ~25 minutos de espera y el vuelo no se pisa.
- *    Todo se envía solo cuando vuelve la conexión, y se envían solas cuando vuelve la conexión.
+ *    Todo se envía solo cuando vuelve la conexión.
  *  LED azul de la placa (GPIO2), para saber qué pasa sin notebook:
  *    AL ENCENDER: destellos según el motivo del arranque
  *      1 = encendido normal · 2 = BROWNOUT (caída de tensión) · 3 = error · 4 = watchdog
