@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.6
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.7
  *  ESP32-S + BMP390 + MPU6050 (opcional)   (sin GPS)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
@@ -126,7 +126,7 @@
 #define SERVO_MAX_US          2400    // pulso a 180°
 #define DEPLOY_AT_APOGEE      true    // true: abre en el apogeo · false: abre al superar ALTITUDE_THRESHOLD_M
 #define ALTITUDE_THRESHOLD_M  15.0f   // altura mínima sobre el suelo para habilitar (armar) el paracaídas
-#define APOGEE_DROP_M         2.0f    // metros que tiene que bajar desde la máxima para confirmar el apogeo
+#define APOGEE_DROP_M         0.5f    // metros que tiene que bajar desde la máxima para confirmar el apogeo
 #define ALT_FILTER            0.35f   // suavizado de la altura (0-1): más bajo = más suave, más lento
 
 // Batería: divisor 100 kΩ (arriba) / 47 kΩ (abajo) hacia GPIO35, 2 celdas Li-ion en serie
@@ -774,7 +774,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.6");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.7");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
