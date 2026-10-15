@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.7
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.8
  *  ESP32-S + BMP390 + MPU6050 (opcional)   (sin GPS)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
@@ -32,6 +32,10 @@
  *
  *    No usar TX0/RX0 (son del USB) ni D0, D2, D12, D15 (los usa el arranque).
  *    D34, D35, D36 y D39 son solo de entrada (D35 se usa para medir la batería).
+ *
+ *  FUNCIONA SIN INTERNET: el barómetro, el paracaídas, el acelerómetro y la SD corren
+ *    en el loop (núcleo 1) y nunca esperan al WiFi. El envío al servidor corre en una
+ *    tarea aparte (núcleo 0): si no hay WiFi o no hay internet, el vuelo no se entera.
  *
  *  WIFI: el ESP32 lo trae incorporado, no lleva cables. Se configura en secrets.h.
  *    Durante el vuelo se pierde la señal: las lecturas quedan en memoria (hasta
@@ -203,7 +207,7 @@ Reading *buffer = nullptr;
 int bufferCap = 0;
 int bufHead = 0, bufCount = 0;
 uint32_t seq = 0;
-uint32_t lastSample = 0, lastSend = 0, lastImu = 0, lastBaro = 0;
+uint32_t lastSample = 0, lastImu = 0, lastBaro = 0;
 uint32_t lastBmpTry = 0;           // reintento del BMP390 si no respondió
 uint32_t lastSdFlush = 0;
 uint32_t sendBackoffUntil = 0;     // después de un error de conexión, espera antes de reintentar
@@ -217,6 +221,14 @@ uint32_t wifiDropsLogged = 0;
 uint32_t sendErrors = 0;                  // envíos fallidos desde el encendido
 uint32_t lastSendOkMs = 0;                // momento del último envío correcto
 const char *bootReason = "";              // motivo del último arranque (texto corto)
+
+// La cola de lecturas la comparten el loop (agrega) y la tarea de envío (saca): se protege
+// con un mutex. La tarea de envío no escribe la SD: deja el texto acá y lo graba el loop.
+SemaphoreHandle_t bufMutex;
+Reading *sendBatch = nullptr;             // copia de las lecturas que se están enviando
+volatile uint32_t netEvents = 0;
+uint32_t netEventsLogged = 0;
+char netEventText[160] = "";
 
 // ================================================================ HORA
 
@@ -485,17 +497,32 @@ void initBuffer() {
 
 void pushBuffer(const Reading &r) {
   if (!bufferCap) return;
+  xSemaphoreTake(bufMutex, portMAX_DELAY);
   if (bufCount == bufferCap) {               // lleno: se descarta la más vieja
     bufHead = (bufHead + 1) % bufferCap;
     bufCount--;
   }
   buffer[(bufHead + bufCount) % bufferCap] = r;
   bufCount++;
+  xSemaphoreGive(bufMutex);
 }
 
-void dropFromBuffer(int n) {
-  bufHead = (bufHead + n) % bufferCap;
-  bufCount -= n;
+// Saca de la cola las lecturas ya enviadas (hasta la de número lastSeq inclusive)
+void dropSent(uint32_t lastSeq) {
+  xSemaphoreTake(bufMutex, portMAX_DELAY);
+  while (bufCount && (int32_t)(buffer[bufHead].seq - lastSeq) <= 0) {
+    bufHead = (bufHead + 1) % bufferCap;
+    bufCount--;
+  }
+  xSemaphoreGive(bufMutex);
+}
+
+// La tarea de envío deja el evento para que el loop lo grabe en la SD
+void netLogEvent(const char *text) {
+  xSemaphoreTake(bufMutex, portMAX_DELAY);
+  strlcpy(netEventText, text, sizeof(netEventText));
+  netEvents = netEvents + 1;
+  xSemaphoreGive(bufMutex);
 }
 
 void addIf(JsonObject o, const char *k, double v) {
@@ -701,13 +728,19 @@ void initWiFi() {
   connectWiFi();
 }
 
+// Corre en la tarea de envío (núcleo 0): puede tardar lo que sea sin frenar el vuelo
 bool flush() {
-  if (!bufCount || WiFi.status() != WL_CONNECTED) return false;
+  if (!bufCount || WiFi.status() != WL_CONNECTED || !sendBatch) return false;
 
+  xSemaphoreTake(bufMutex, portMAX_DELAY);
   int n = min(bufCount, BATCH_SIZE);
+  for (int i = 0; i < n; i++) sendBatch[i] = buffer[(bufHead + i) % bufferCap];
+  xSemaphoreGive(bufMutex);
+  if (!n) return false;
+
   JsonDocument doc;
   JsonArray arr = doc.to<JsonArray>();
-  for (int i = 0; i < n; i++) toJson(arr.add<JsonObject>(), buffer[(bufHead + i) % bufferCap]);
+  for (int i = 0; i < n; i++) toJson(arr.add<JsonObject>(), sendBatch[i]);
   String body;
   serializeJson(doc, body);
 
@@ -720,7 +753,7 @@ bool flush() {
   http.end();
 
   if (code == 201) {
-    dropFromBuffer(n);
+    dropSent(sendBatch[n - 1].seq);
     lastSendOkMs = millis();
     digitalWrite(STATUS_LED_PIN, !digitalRead(STATUS_LED_PIN));
     Serial.printf("  Envío correcto: %d lectura(s) en %lu ms · pendientes: %d\n", n, millis() - t0, bufCount);
@@ -741,17 +774,28 @@ bool flush() {
     snprintf(line, sizeof(line), "# Error de envio (uptime %lu s): %s, TLS: %s, DNS: %s, senal %d dBm",
              (unsigned long)(millis() / 1000), HTTPClient::errorToString(code).c_str(), err,
              dns ? "ok" : "FALLO", WiFi.RSSI());
-    sdLogEvent(line);
+    netLogEvent(line);
   } else {
     Serial.printf("  Error HTTP %d: %s\n", code, resp.c_str());
     char line[120];
     snprintf(line, sizeof(line), "# Error HTTP %d (uptime %lu s)", code, (unsigned long)(millis() / 1000));
-    sdLogEvent(line);
+    netLogEvent(line);
   }
   sendErrors++;
 
-  if (code == 400) dropFromBuffer(n);   // datos inválidos: se descartan para no trabar la cola
+  if (code == 400) dropSent(sendBatch[n - 1].seq);   // datos inválidos: se descartan para no trabar la cola
   return false;
+}
+
+// Tarea de envío: conecta el WiFi y manda lo pendiente, separada del vuelo
+void netTask(void *) {
+  for (;;) {
+    if (bufCount && (int32_t)(millis() - sendBackoffUntil) >= 0) {
+      connectWiFi();
+      flush();
+    }
+    vTaskDelay(pdMS_TO_TICKS(SEND_INTERVAL_MS));
+  }
 }
 
 // ================================================================ MONITOR SERIE
@@ -774,7 +818,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.7");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.8");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
@@ -797,7 +841,9 @@ void setup() {
   tzset();
   sntp_set_time_sync_notification_cb(onNtpSync);   // antes de configTime()
 
+  bufMutex = xSemaphoreCreateMutex();
   initBuffer();                // primero: reserva la memoria para guardar lecturas sin conexión
+  sendBatch = (Reading *)malloc(sizeof(Reading) * BATCH_SIZE);
   initSD();                    // si falla, el resto del firmware sigue funcionando
   initBattery();
   initBmp();
@@ -810,7 +856,10 @@ void setup() {
   else Serial.println(BATTERY_PIN < 0 ? "Batería: medición desactivada (BATTERY_PIN -1)"
                                        : "Batería: divisor no conectado (no se mide)");
 
-  Serial.println("\nSistema iniciado");
+  // El envío al servidor corre aparte, en el núcleo 0 (el del WiFi): el loop queda libre
+  xTaskCreatePinnedToCore(netTask, "envio", 16384, nullptr, 1, nullptr, 0);
+
+  Serial.println("\nSistema iniciado (el paracaídas funciona aunque no haya WiFi ni internet)");
 }
 
 void loop() {
@@ -861,10 +910,14 @@ void loop() {
     logFile.flush();
   }
 
-  // Envío: como máximo cada 0,5 s, con todo lo pendiente (con pausa tras un error)
-  if (bufCount && now - lastSend >= SEND_INTERVAL_MS && (int32_t)(now - sendBackoffUntil) >= 0) {
-    lastSend = now;
-    connectWiFi();
-    flush();
+  // Errores de envío: la tarea de envío los deja anotados y acá se graban en la SD
+  if (netEvents != netEventsLogged) {
+    char line[160];
+    xSemaphoreTake(bufMutex, portMAX_DELAY);
+    strlcpy(line, netEventText, sizeof(line));
+    netEventsLogged = netEvents;
+    xSemaphoreGive(bufMutex);
+    sdLogEvent(line);
   }
+  // (el envío al servidor lo hace netTask en el otro núcleo: este loop nunca espera al WiFi)
 }
