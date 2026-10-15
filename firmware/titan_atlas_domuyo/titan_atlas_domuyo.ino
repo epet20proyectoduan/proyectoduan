@@ -1,6 +1,6 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.11
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.10
  *  ESP32-S + BMP390 + MPU6050 (opcional)   (sin GPS)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
@@ -132,9 +132,6 @@
 #define SERVO_FINAL_ANGLE     180
 #define SERVO_MIN_US          500     // pulso a 0°   (MG90S: 500–2400 µs = recorrido completo de 180°)
 #define SERVO_MAX_US          2400    // pulso a 180°
-#define SERVO_HZ              100     // refresco de la señal: 100 Hz da más fuerza que 50 Hz en servos analógicos
-                                      // (si un servo vibra o calienta mucho, volver a 50)
-#define SERVO_KICK_DEG        40      // al abrir: retrocede 40° y vuelve a empujar, para destrabar
 #define DEPLOY_AT_APOGEE      true    // true: abre en el apogeo · false: abre al superar ALTITUDE_THRESHOLD_M
 #define ALTITUDE_THRESHOLD_M  5.0f    // altura mínima sobre el suelo para habilitar (armar) el paracaídas
 #define APOGEE_DROP_M         0.5f    // metros que tiene que bajar desde la máxima para confirmar el apogeo
@@ -393,8 +390,8 @@ int batteryPercent(float volts) {
 // ================================================================ PARACAÍDAS (SERVOS)
 
 void initServos() {
-  servo1.setPeriodHertz(SERVO_HZ);
-  servo2.setPeriodHertz(SERVO_HZ);
+  servo1.setPeriodHertz(50);
+  servo2.setPeriodHertz(50);
   // Uno por vez: si arrancan juntos, el pico de corriente puede reiniciar el ESP32
   servo1.attach(SERVO1_PIN, SERVO_MIN_US, SERVO_MAX_US);
   servo1Ok = servo1.attached();
@@ -422,36 +419,12 @@ void initServos() {
 
 void sdLogEvent(const char *text);
 
-// Apertura con más fuerza: los servos se mueven de a uno (cada uno con toda la corriente)
-// y después dan 3 "golpes" (retroceden SERVO_KICK_DEG y vuelven a empujar) para vencer la
-// fricción de la traba. Corre desde el loop sin frenar nada. -1 = ese servo no cambia.
-struct ServoStep { uint16_t atMs; int16_t a1, a2; };
-const int16_t KICK = SERVO_FINAL_ANGLE - SERVO_KICK_DEG;
-const ServoStep DEPLOY_STEPS[] = {
-  {0,    SERVO_FINAL_ANGLE, -1}, {200,  -1, SERVO_FINAL_ANGLE},
-  {700,  KICK, KICK},            {900,  SERVO_FINAL_ANGLE, -1}, {1100, -1, SERVO_FINAL_ANGLE},
-  {1600, KICK, KICK},            {1800, SERVO_FINAL_ANGLE, -1}, {2000, -1, SERVO_FINAL_ANGLE},
-  {2500, KICK, KICK},            {2700, SERVO_FINAL_ANGLE, -1}, {2900, -1, SERVO_FINAL_ANGLE},
-};
-const int DEPLOY_STEP_COUNT = sizeof(DEPLOY_STEPS) / sizeof(DEPLOY_STEPS[0]);
-int deployStep = DEPLOY_STEP_COUNT;     // = terminado
-uint32_t deployStepStart = 0;
-
-void updateServoSequence(uint32_t now) {
-  while (deployStep < DEPLOY_STEP_COUNT && now - deployStepStart >= DEPLOY_STEPS[deployStep].atMs) {
-    const ServoStep &st = DEPLOY_STEPS[deployStep++];
-    if (st.a1 >= 0 && servo1Ok) servo1.write(st.a1);
-    if (st.a2 >= 0 && servo2Ok) servo2.write(st.a2);
-  }
-}
-
 void deployParachute(float altRel) {
   deployState = DEPLOY_DONE;
   deployAltRel = altRel;
   deployAtMs = millis();
-  deployStepStart = millis();       // arranca la secuencia de apertura (de a uno + golpes)
-  deployStep = 0;
-  updateServoSequence(deployStepStart);
+  if (servo1Ok) servo1.write(SERVO_FINAL_ANGLE);
+  if (servo2Ok) servo2.write(SERVO_FINAL_ANGLE);
 
   Serial.println("\n==================================");
   Serial.printf("PARACAÍDAS DESPLEGADO a %.1f m (máxima %.1f m)\n", altRel, maxAltRel);
@@ -877,7 +850,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.11");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.10");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
@@ -962,7 +935,6 @@ void loop() {
   }
 
   updateStatusLed(now);
-  updateServoSequence(now);    // apertura del paracaídas en curso (si la hay)
 
   // SD: graba lo pendiente cada 2 s; desde que se arma, cada 0,5 s (así no se pierde la caída
   // si el golpe corta la alimentación)
