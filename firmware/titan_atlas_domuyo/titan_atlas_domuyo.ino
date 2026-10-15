@@ -1,14 +1,13 @@
 /*
  * ============================================================
- *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.10
+ *  Titan ATLAS · Misión Domuyo — Firmware de vuelo y telemetría  v3.12
  *  ESP32-S + BMP390 + MPU6050 (opcional)   (sin GPS)
  *  + tarjeta SD + 2 servos MG90S (paracaídas) + medición de batería
  *
  *  Telemetría: 2 lecturas por segundo (cada 0,5 s)
  *  Paracaídas: se abre en el APOGEO (cuando el cohete deja de subir y empieza
  *              a caer 0,5 m), una vez superados 5 m. La altura se controla 10 veces
- *              por segundo. Mientras espera en la rampa, la referencia del suelo
- *              sigue los cambios del clima (no se corre aunque pasen varios minutos).
+ *              por segundo. El suelo se mide al encender: encenderlo en la rampa.
  * ============================================================
  *
  *  ALIMENTACIÓN (importante)
@@ -136,8 +135,6 @@
 #define ALTITUDE_THRESHOLD_M  5.0f    // altura mínima sobre el suelo para habilitar (armar) el paracaídas
 #define APOGEE_DROP_M         0.5f    // metros que tiene que bajar desde la máxima para confirmar el apogeo
 #define ALT_FILTER            0.35f   // suavizado de la altura (0-1): más bajo = más suave, más lento
-#define GROUND_TRACK_RATE     0.005f  // en espera, el suelo sigue los cambios del clima (~20 s de constante)
-#define GROUND_TRACK_MAX_M    2.0f    // ...solo si está a menos de 2 m del suelo (en el despegue se congela)
 
 // Batería: divisor 100 kΩ (arriba) / 47 kΩ (abajo) hacia GPIO35, 2 celdas Li-ion en serie
 #define BATTERY_PIN           -1      // poner 35 cuando el divisor esté conectado (-1 = no se mide)
@@ -314,14 +311,6 @@ void readBaro() {
   }
 
   float rel = baro.altitude - groundAltitude;
-
-  // En la rampa, la presión cambia con el clima: mientras espera y está cerca del suelo,
-  // la referencia se corrige de a poco. En el despegue sube rápido y deja de corregirse.
-  if (deployState == DEPLOY_WAITING && fabsf(rel) < GROUND_TRACK_MAX_M) {
-    groundAltitude += GROUND_TRACK_RATE * rel;
-    rel = baro.altitude - groundAltitude;
-    if (!isnan(maxAltRel) && maxAltRel > GROUND_TRACK_MAX_M) maxAltRel = NAN;
-  }
 
   baro.altFiltered = isnan(baro.altFiltered) ? rel : baro.altFiltered + ALT_FILTER * (rel - baro.altFiltered);
   if (isnan(maxAltRel) || baro.altFiltered > maxAltRel) maxAltRel = baro.altFiltered;
@@ -850,7 +839,7 @@ void setup() {
   Serial.begin(115200);
   delay(300);
   Serial.println("\n==================================");
-  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.10");
+  Serial.println("Titan ATLAS · Misión Domuyo · firmware v3.12");
   Serial.println("Telemetría 2 Hz + SD + paracaídas + batería");
   Serial.println("==================================");
   Serial.printf("Motivo del arranque: %s\n", resetReasonText());
